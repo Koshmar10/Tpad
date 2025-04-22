@@ -263,18 +263,30 @@ impl App {
                         if active_doc.state.curs_x == 0 {
                             if active_doc.state.curs_y > 0 {
                                 // Not the first visible line: merge with the previous visible line.
+                                let merge_point = active_doc.content[idx - 1].len();
                                 let to_move_up = active_doc.content[idx].clone();
                                 active_doc.content.remove(idx);
                                 active_doc.state.curs_y -= 1;
                                 let new_idx = active_doc.state.scroll_offset + active_doc.state.curs_y;
+                                active_doc.state.undo_stack.push(EditOp::MergeLines {
+                                    merged_line: new_idx,
+                                    merge_point,
+                                    applied: false,
+                                });
                                 active_doc.content[new_idx].push_str(&to_move_up);
                                 active_doc.state.curs_x = active_doc.content[new_idx].len();
                             } else if active_doc.state.scroll_offset > 0 {
                                 // At the first visible line but with a scroll offset:
                                 // scroll up and merge with the hidden previous line.
                                 let new_idx = active_doc.state.scroll_offset - 1;
+                                let merge_point = active_doc.content[new_idx].len();
                                 let to_move_up = active_doc.content.remove(idx);
                                 active_doc.state.scroll_offset -= 1;
+                                active_doc.state.undo_stack.push(EditOp::MergeLines {
+                                    merged_line: new_idx,
+                                    merge_point,
+                                    applied: false,
+                                });
                                 active_doc.content[new_idx].push_str(&to_move_up);
                                 // curs_y remains 0 since the new first visible line is now the previous line.
                                 active_doc.state.curs_x = active_doc.content[new_idx].len();
@@ -694,15 +706,12 @@ impl Document {
                 }
                 EditOp::SplitLine { first_line, second_line, applied } => {
                     if !*applied {
-
                         let mut add_offset = false;
-
                         if self.content[*second_line].len() != 0 {
                             let to_move = self.content[*second_line].clone();
                             self.content[*first_line].push_str(&to_move);
                             add_offset = true;
-                        }
-                        else {
+                        } else {
                             if self.content[*first_line].len() != 0 {
                                 add_offset = true;
                             }
@@ -711,8 +720,20 @@ impl Document {
                         let aux = *first_line;
                         *applied = true;
                         Some((aux, self.content[aux].len().saturating_sub(1), add_offset))
+                    } else {
+                        None
                     }
-                    else {
+                }
+                EditOp::MergeLines { merged_line, merge_point, applied } => {
+                    if !*applied {
+                        // Undo a merge by splitting the merged line at merge_point.
+                        let m_line = *merged_line;
+                        let split_point = *merge_point;
+                        let new_line = self.content[m_line].split_off(split_point);
+                        self.content.insert(m_line + 1, new_line);
+                        *applied = true;
+                        Some((m_line, split_point, false))
+                    } else {
                         None
                     }
                 }
@@ -750,6 +771,20 @@ impl Document {
                         *applied = false;
                         // For redoing a deletion, place the cursor at the removed char position
                         Some((*line, *col, false))
+                    } else {
+                        None
+                    }
+                }
+                EditOp::MergeLines { merged_line, merge_point, applied } => {
+                    if *applied {
+                        // Redo a merge by removing the line after merged_line and appending its content.
+                        let m_line = *merged_line;
+                        if m_line + 1 < self.content.len() {
+                            let second_line = self.content.remove(m_line + 1);
+                            self.content[m_line].push_str(&second_line);
+                        }
+                        *applied = false;
+                        Some((m_line, self.content[m_line].len().saturating_sub(1), false))
                     } else {
                         None
                     }
