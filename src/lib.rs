@@ -114,23 +114,51 @@ impl App {
                 f.render_widget(cmd, chunks[3]);
 
                 // Render the error popup if `render_error` is true
-                if self.render_error {
-                    let popup_width = area.width / 2;
+                let popup_width = area.width / 2;
                     let popup_height = area.height / 2;
                     let popup_x = area.x + (area.width - popup_width) / 2;
                     let popup_y = area.y + (area.height - popup_height) / 2;
 
                     let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+                if self.render_error {
+                    
                     tpad_error::render_error_popup(f, popup_area, &self.error_msg);
                 }
-            })?;
+                if self.show_popup {
+                    let popup = Paragraph::new(Text::from(self.popup_message.clone()))
+                        .block(Block::default().borders(Borders::ALL).title("Popup"));
+                    f.render_widget(popup, popup_area);
+                }
 
+            })?;
+            if self.exit_requested && !self.show_popup{
+                self.exit().unwrap();
+            }
             self.handle_events()?;
         }
         Ok(())
     }
     
     pub fn handle_key_event(&mut self, key_event: KeyEvent) {
+        if self.show_popup {
+            match key_event.code {
+                KeyCode::Char('y') => {
+                    self.documents[self.active]
+                        .save_file()
+                        .unwrap_or_else(|e| self.throw_error(e));
+                    self.show_popup = false;
+                    self.exit_requested = false;
+                    self.exit().unwrap_or_else(|e| self.throw_error(e));
+                }
+                KeyCode::Char('n') => {
+                    self.show_popup = false;
+                    self.exit_requested = false;
+                    self.exit().unwrap_or_else(|e| self.throw_error(e));
+                }
+                _ => return,
+            }
+            return;
+        }
         match (key_event.code, key_event.modifiers) {
             // Handle ':' to switch to Command mode
             (KeyCode::Char(':'), KeyModifiers::NONE) => {
@@ -204,7 +232,7 @@ impl App {
 
             // Handle Ctrl + Q to quit the application
             (KeyCode::Char('q'), KeyModifiers::CONTROL) => {
-                self.exit().unwrap_or_else(|e| self.throw_error(e)); // Fixed method name
+                self.try_exit();
             }
 
             // Handle Alt + Left Arrow to switch tabs left
@@ -497,7 +525,7 @@ impl App {
                     println!("{}", msg[0]);
                 }
                 Some(Operations::Exit) => {
-                    self.exit().unwrap_or_else(|e| self.throw_error(e)); // Fixed method name
+                    self.try_exit();
                 }
                 Some(Operations::List) => {
                     let msg = self.list_docs();
@@ -516,6 +544,18 @@ impl App {
             }
         }
     }
+    pub fn try_exit(&mut self) {
+        let doc = &self.documents[self.active];
+        if doc.state.is_dirty {
+            self.show_popup =  true;
+            self.exit_requested = true;
+            self.popup_message = String::from("Save befor exiting?(y/n");
+        }
+        else {
+            self.exit().unwrap();
+        }
+    }
+   
     pub fn exit(&mut self) -> Result<(), Box<dyn Error>>{
         session::save_session(self)?;
         self.running=false;
