@@ -12,27 +12,7 @@ loading a file / multiple files
 searching in file, counting words,
 use std::env;
 
-fn main() {
-    let args: Vec<String> = env::args().collect();
 
-    let file_arg = if args.len() > 1 { Some(&args[1]) } else { None };
-    let mut state = AppState::new(file_arg);
-    let mut cmd_handler = CommandHandler::new(&mut state);
-    let running: bool = true;
-
-    let mut input_buffer = String::new();
-    
-    while running {
-        println!("\nEntered command: {input_buffer}");
-        input_buffer.clear();
-        cmd_handler.state.view();
-        io::stdin()
-        .read_line(&mut input_buffer)
-        .expect("Failed to read line");
-    
-    cmd_handler.run(&input_buffer);
-}
-}
 */
 
 fn main() -> color_eyre::Result<()> {

@@ -14,6 +14,7 @@ use crate::{App, Windows};
 
 impl App {
     pub fn render_status_bar(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        
         let cursor_info = (
             self.documents[self.active].state.curs_x,
             self.documents[self.active].state.curs_y + self.documents[self.active].state.scroll_offset,
@@ -25,51 +26,114 @@ impl App {
             "Unsaved"
         };
         let status_text = format!(
-            "Tpad | Line: {} Col: {} | {} | {}| Size: {} | op_cursor {}",
+            "Tpad | Line: {} Col: {} | {} | {}| Size: {} | open tabs: {} | op cusor: {}",
             cursor_info.1,
             cursor_info.0,
             saved,
             permissions,
             self.documents[self.active].size,
+            self.documents.len(),
             self.documents[self.active].state.undo_stack.cursor
         );
         let status_bar = Paragraph::new(Line::from(status_text).left_aligned());
         frame.render_widget(status_bar, area);
     }
 
-    pub fn render_tab_bar(
-        &mut self,
-        frame: &mut Frame<'_>,
-        area: Rect,
-    ) {
-        let tabs: Vec<String> = self.documents.iter().map(
-            |doc| get_file_name(doc.file_path.clone())
-        ).collect();
-        let tab_size = tabs.iter().map(|s| s.len()).max().unwrap_or(0) as u16;
-        let tab_bar = Layout::default()
+    pub fn render_tab_bar(&mut self, f: &mut Frame<'_>, area: Rect) {
+        let pad = 6;
+        // Create a vector with tabs, each as a tuple containing the global index and tab details.
+        let opend_tabs: Vec<(usize, (String, usize))> = self
+            .documents
+            .iter()
+            .enumerate()
+            .map(|(i, d)| {
+                let file_name = get_file_name(d.file_path.clone());
+                (i, (file_name.clone(), file_name.len() + pad))
+            })
+            .collect();
+
+        // Partition tabs into packs based on the available area width.
+        let mut tab_packs: Vec<Vec<(usize, (String, usize))>> = vec![vec![]];
+        let mut current_pack_index: usize = 0;
+        let mut pack_size: usize = 0;
+        for tab in opend_tabs.into_iter() {
+            if pack_size + tab.1.1 <= area.width as usize {
+                tab_packs[current_pack_index].push(tab.clone());
+                pack_size += tab.1.1;
+            } else {
+                current_pack_index += 1;
+                tab_packs.push(vec![]);
+                tab_packs[current_pack_index].push(tab.clone());
+                pack_size = tab.1.1;
+            }
+        }
+
+        // Calculate which pack the active tab belongs to and its relative index.
+        let mut active_pack_index = None;
+        let mut active_relative_index = None;
+        for (pack_idx, pack) in tab_packs.iter().enumerate() {
+            for (rel_idx, (global_idx, _)) in pack.iter().enumerate() {
+                if *global_idx == self.active {
+                    active_pack_index = Some(pack_idx);
+                    active_relative_index = Some(rel_idx);
+                    break;
+                }
+            }
+            if active_pack_index.is_some() {
+                break;
+            }
+        }
+
+        // Retrieve the tabs for the current pack.
+        let mut tabs_to_render: Vec<(usize, (String, usize))> = tab_packs
+            .get(active_pack_index.unwrap_or(0))
+            .cloned()
+            .unwrap_or_default();
+
+        // If this is not the last pack then add an extra overflow tab that fills the remaining space.
+        if active_pack_index.unwrap_or(0) < tab_packs.len() - 1 {
+            // Sum the widths used in this pack.
+            let used_width: usize = tabs_to_render.iter().map(|tab| tab.1.1).sum();
+            let mut remaining = if used_width < area.width as usize {
+                area.width as usize - used_width
+            } else {
+                0
+            };
+            remaining = remaining+2;
+                // Use at least a few columns for the marker.
+                tabs_to_render.push((usize::MAX, ("...".to_string(), remaining)));
+            
+        }
+
+        let constraints: Vec<Constraint> = tabs_to_render
+            .iter()
+            .map(|tab| Constraint::Length(tab.1.1 as u16))
+            .collect();
+
+        let chunks = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints(
-                tabs.iter()
-                    .map(|_| Constraint::Length(tab_size + 4))
-                    .collect::<Vec<_>>(),
-            )
+            .constraints(constraints)
             .split(area);
 
-        for (i, (tab, doc)) in tab_bar.iter().zip(tabs).enumerate() {
-            let tab_item = Paragraph::new(Text::from(doc))
-                .block(
-                    Block::default()
-                        .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT),
-                )
+        // Render each visible tab.
+        for (i, (&chunk, tab)) in chunks.iter().zip(tabs_to_render.iter()).enumerate() {
+            // If tab's global index is usize::MAX, it's our overflow marker.
+            let (name, _) = if tab.0 == usize::MAX {
+                (tab.1.0.clone(), 0)
+            } else {
+                (tab.1.0.clone(), tab.1.1)
+            };
+            let style = if active_relative_index.is_some() && i == active_relative_index.unwrap() {
+                Color::Yellow
+            } else {
+                Color::White
+            };
+            let tab_widget = Paragraph::new(Text::from(name))
+                .block(Block::default().borders(Borders::TOP | Borders::LEFT | Borders::RIGHT))
                 .centered()
-                .style(Style::default().fg({
-                    if i == self.active {
-                        Color::Yellow
-                    } else {
-                        Color::White
-                    }
-                }));
-            frame.render_widget(tab_item, *tab);
+                .alignment(ratatui::layout::Alignment::Center)
+                .style(Style::default().fg(style));
+            f.render_widget(tab_widget, chunk);
         }
     }
 

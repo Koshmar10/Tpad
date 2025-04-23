@@ -5,6 +5,7 @@ use std::{collections::btree_map::Range, fs};
 use std::error::Error;
 use ratatui::prelude::Line;
 use ratatui::{layout::Rect, style::{Color, Style}, text::Span};
+use serde::{Deserialize, Serialize};
 use std::io;
 use color_eyre:: Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -42,9 +43,11 @@ impl App {
 
         let mut error_msg = String::new();
         let mut render_error = false;
+        let mut undo_history: Vec<UndoStack> = Vec::new();
 
-        let old_docs: Vec<Document> = match session::load_session() {
+        let mut  old_docs: Vec<Document> = match session::load_session() {
             Some(session) => {
+                undo_history = session.undoBufs;
                 session.saved_files.iter()
                     .filter_map(|file_path| {
                         match Document::new(file_path) {
@@ -57,9 +60,15 @@ impl App {
                         }
                     })
                     .collect()
+               
             }
             None => Vec::new(),
         };
+        
+        for (doc, stack) in old_docs.iter_mut().zip(undo_history) {
+            doc.state.undo_stack =stack;
+        }
+        
 
         let new_docs: Vec<Document> = files.iter()
             .filter_map(|file_path| {
@@ -547,11 +556,12 @@ pub struct EditorState {
     highlights: Vec<(usize, usize, usize)>,
     undo_stack: UndoStack
 }
-
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct UndoStack {
     stack: Vec<EditOp>,
     cursor: usize,
 }
+#[derive(Serialize, Deserialize, Debug, Clone)]
 enum EditOp {
     InsertChar { line: usize, col: usize, ch: char, applied: bool },
     DeleteChar { line: usize, col: usize, ch: char, applied: bool },
