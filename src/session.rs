@@ -3,11 +3,11 @@ use serde_json::json;
 use std::{error::Error, fs, path::PathBuf};
 use serde::{Serialize, Deserialize};
 use crate::{App, UndoStack};
-
+use crate::data_models::*;
 #[derive(Serialize, Deserialize)]
 pub struct SavedSession {
     pub saved_files: Vec<String>,
-    pub undoBufs: Vec<UndoStack>,
+    pub undo_bufs: Vec<UndoStack>,
     pub active: usize,
 }
 fn get_session_file_path() -> PathBuf {
@@ -20,7 +20,7 @@ pub fn save_session(app: &mut App) ->Result<(), Box<dyn Error>> {
         saved_files: app.documents.iter().map(
             |doc| doc.file_path.clone()
         ).collect(),
-        undoBufs: app.documents.iter().map(
+        undo_bufs: app.documents.iter().map(
             |doc| doc.state.undo_stack.clone()
         ).collect(),
         active: app.active,

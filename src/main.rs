@@ -2,8 +2,7 @@ use std::env;
 
 use color_eyre;
 use ratatui;
-use tpad::App;
-
+use tpad::data_models::App;
 
 /*
 Goals

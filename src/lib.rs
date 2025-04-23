@@ -10,33 +10,13 @@ use std::io;
 use color_eyre:: Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::{layout::{Constraint, Direction, Layout}, text::Text, widgets::{Block, Borders, Paragraph}, DefaultTerminal, Frame};
+use data_models::*;
 
 pub mod session;
-pub mod error;
+pub mod tpad_error;
 pub mod ui;
-pub enum CursorDirection {
-    Left,
-    Right,
-    Up,
-    Down,
-}
-pub struct App {
-    pub documents: Vec<Document>,
-    pub input_buffer: String,
-    
-    pub active: usize,
-    pub running: bool,
-    pub render_error: bool,
-    pub error_msg: String,
+pub mod data_models;
 
-    pub focus: Windows,
-
-}
-
-pub enum Windows {
-    Editor,
-    Command
-}
 impl App {
     pub fn new(file_args: Vec<String>) -> App {
         let files: Vec<String> = if !file_args.is_empty() { file_args } else { Vec::new() };
@@ -47,7 +27,7 @@ impl App {
 
         let mut  old_docs: Vec<Document> = match session::load_session() {
             Some(session) => {
-                undo_history = session.undoBufs;
+                undo_history = session.undo_bufs;
                 session.saved_files.iter()
                     .filter_map(|file_path| {
                         match Document::new(file_path) {
@@ -97,6 +77,9 @@ impl App {
             error_msg,
             running: true,
             input_buffer: String::new(),
+            show_popup: false,
+            exit_requested: false,
+            popup_message: String::new(),
             focus: Windows::Editor,
         }
     }
@@ -138,7 +121,7 @@ impl App {
                     let popup_y = area.y + (area.height - popup_height) / 2;
 
                     let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
-                    error::render_error_popup(f, popup_area, &self.error_msg);
+                    tpad_error::render_error_popup(f, popup_area, &self.error_msg);
                 }
             })?;
 
@@ -539,46 +522,7 @@ impl App {
         Ok(())
     }
 }
-pub struct Document {
-    pub file_path: String,
-    pub permissions: String,
-    pub size: u64,
-    pub content: Vec<String>, // Changed from String to Vec<String>
-    pub state: EditorState
-}
 
-pub struct EditorState {
-    curs_x: usize,
-    curs_y: usize,
-    is_dirty: bool,
-    window_height: usize,
-    scroll_offset: usize,
-    highlights: Vec<(usize, usize, usize)>,
-    undo_stack: UndoStack
-}
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct UndoStack {
-    stack: Vec<EditOp>,
-    cursor: usize,
-}
-#[derive(Serialize, Deserialize, Debug, Clone)]
-enum EditOp {
-    InsertChar { line: usize, col: usize, ch: char, applied: bool },
-    DeleteChar { line: usize, col: usize, ch: char, applied: bool },
-    SplitLine { first_line: usize, second_line: usize, applied: bool }, // ← Enter key
-    MergeLines { merged_line: usize, merge_point: usize,  applied: bool }, // ← Undo of SplitLine
-
-}
-
-pub enum Operations {
-    Open(String),
-    WordCount(String),
-    Find(String),
-    Change(usize),
-    List,
-    Close,
-    Exit,
-}
 
 impl EditorState {
     pub fn new(past_state: Option<EditorState>) -> EditorState {

@@ -9,7 +9,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
     Frame,
 };
-
+use crate::data_models::*;
 use crate::{App, Windows};
 
 impl App {
