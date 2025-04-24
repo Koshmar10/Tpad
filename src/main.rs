@@ -2,7 +2,7 @@ use std::env;
 
 use color_eyre;
 use ratatui;
-use tpad::data_models;
+use tpad::*;
 
 /*
 Goals
@@ -24,7 +24,7 @@ fn main() -> color_eyre::Result<()> {
     let result = {
         let args: Vec<String> = env::args().collect();
         let file_args: Vec<String> = args.into_iter().skip(1).collect();
-        let mut app = data_models::App::new(file_args);
+        let mut app = App::new(file_args);
 
         app.run(terminal)
     };
@@ -35,4 +35,3 @@ fn main() -> color_eyre::Result<()> {
     // Return the result of the application
     result
 }
-

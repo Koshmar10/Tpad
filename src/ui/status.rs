@@ -1,9 +1,8 @@
-use ratatui::{layout::Rect, text::Line, widgets::Paragraph, Frame};
+use ratatui::{Frame, layout::Rect, text::Line, widgets::Paragraph};
 
 use crate::data_models::*;
 
 pub fn render_status_bar(frame: &mut Frame<'_>, area: Rect, ctx: &RenderContext) {
-        
     let cursor_info = (
         ctx.documents[*ctx.active].state.curs_x,
         ctx.documents[*ctx.active].state.curs_y + ctx.documents[*ctx.active].state.scroll_offset,

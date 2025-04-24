@@ -1,12 +1,16 @@
-use ratatui::{layout::{Constraint, Direction, Layout, Rect}, style::{Color, Style}, text::{Line, Span, Text}, widgets::{Block, Borders, Paragraph}, Frame};
-
+use ratatui::{
+    Frame,
+    layout::{Constraint, Direction, Layout, Rect},
+    style::{Color, Style},
+    text::{Line, Span, Text},
+    widgets::{Block, Borders, Paragraph},
+};
 
 use crate::data_models::*;
 
 pub fn render_doc_view(frame: &mut Frame<'_>, area: Rect, ctx: &RenderContext) {
     let selected_doc = &ctx.documents[*ctx.active];
-   
-   
+
     let doc_view = selected_doc
         .content
         .iter()
@@ -49,9 +53,7 @@ pub fn render_doc_view(frame: &mut Frame<'_>, area: Rect, ctx: &RenderContext) {
 
     let doc_view_slice = &doc_view[selected_doc.state.scroll_offset..];
     let doc_view_paragraph = Paragraph::new(Text::from_iter(doc_view_slice.iter().cloned()))
-        .block(
-            Block::default().borders(Borders::TOP | Borders::LEFT | Borders::RIGHT),
-        );
+        .block(Block::default().borders(Borders::TOP | Borders::LEFT | Borders::RIGHT));
 
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -65,8 +67,8 @@ pub fn render_doc_view(frame: &mut Frame<'_>, area: Rect, ctx: &RenderContext) {
         })
         .collect();
     let line_numbers = Text::from(lines);
-    let line_numbers_widget = Paragraph::new(line_numbers)
-        .block(Block::default().borders(Borders::LEFT | Borders::TOP));
+    let line_numbers_widget =
+        Paragraph::new(line_numbers).block(Block::default().borders(Borders::LEFT | Borders::TOP));
     frame.render_widget(line_numbers_widget, chunks[0]);
     frame.render_widget(doc_view_paragraph, chunks[1]);
 

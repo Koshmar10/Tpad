@@ -1,6 +1,5 @@
-use ratatui::{layout::Rect, prelude::CrosstermBackend, Terminal};
+use ratatui::layout::Rect;
 use serde::{Deserialize, Serialize};
-
 
 pub enum CursorDirection {
     Left,
@@ -9,18 +8,17 @@ pub enum CursorDirection {
     Down,
 }
 
-
 pub struct App {
     pub documents: Vec<Document>,
     pub window_height: u16,
     pub input_buffer: String,
-    
+
     pub active: usize,
     pub running: bool,
     pub render_error: bool,
     pub error_msg: String,
 
-    pub exit_requested : bool,
+    pub exit_requested: bool,
     pub show_popup: bool,
     pub popup_message: String,
 
@@ -35,7 +33,6 @@ pub struct LayoutSnapshot {
     pub tab_area: Rect,
     pub editor_area: Rect,
     pub command_area: Rect,
-    
 }
 pub struct RenderContext<'a> {
     pub documents: &'a Vec<Document>,
@@ -71,10 +68,28 @@ pub struct EditorState {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum EditOp {
-    InsertChar {  line: usize,  col: usize,  ch: char,  applied: bool },
-    DeleteChar {  line: usize,  col: usize,  ch: char,  applied: bool },
-    SplitLine {  first_line: usize,  second_line: usize,  applied: bool }, // ← Enter key
-    MergeLines {  merged_line: usize,  merge_point: usize,  applied: bool }, // ← Undo of SplitLine
+    InsertChar {
+        line: usize,
+        col: usize,
+        ch: char,
+        applied: bool,
+    },
+    DeleteChar {
+        line: usize,
+        col: usize,
+        ch: char,
+        applied: bool,
+    },
+    SplitLine {
+        first_line: usize,
+        second_line: usize,
+        applied: bool,
+    }, // ← Enter key
+    MergeLines {
+        merged_line: usize,
+        merge_point: usize,
+        applied: bool,
+    }, // ← Undo of SplitLine
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

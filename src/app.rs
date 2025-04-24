@@ -1,61 +1,60 @@
-use ratatui::DefaultTerminal;
+use ratatui::{DefaultTerminal, Frame};
 use std::error::Error;
-use ratatui::prelude::Line;
-use ratatui::{layout::Rect, style::{Color, Style}, text::Span};
-use serde::{Deserialize, Serialize};
-use std::io::{self, SeekFrom};
-use color_eyre:: Result;
+
+use color_eyre::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use ratatui::{layout::{Constraint, Direction, Layout}, text::Text, widgets::{Block, Borders, Paragraph},  Frame};
+use std::io::{self};
+
 use crate::data_models::*;
 
 use crate::session;
 
 use crate::ui::render;
 
-
 impl App {
     pub fn new(file_args: Vec<String>) -> App {
-        let files: Vec<String> = if !file_args.is_empty() { file_args } else { Vec::new() };
+        let files: Vec<String> = if !file_args.is_empty() {
+            file_args
+        } else {
+            Vec::new()
+        };
 
         let mut error_msg = String::new();
         let mut render_error = false;
         let mut undo_history: Vec<UndoStack> = Vec::new();
 
-        let mut  old_docs: Vec<Document> = match session::load_session() {
+        let mut old_docs: Vec<Document> = match session::load_session() {
             Some(session) => {
                 undo_history = session.undo_bufs;
-                session.saved_files.iter()
-                    .filter_map(|file_path| {
-                        match Document::new(file_path) {
-                            Ok(doc) => Some(doc),
-                            Err(err) => {
-                                error_msg.push_str(&format!("Error loading '{}': {}\n", file_path, err));
-                                render_error = true;
-                                None
-                            }
+                session
+                    .saved_files
+                    .iter()
+                    .filter_map(|file_path| match Document::new(file_path) {
+                        Ok(doc) => Some(doc),
+                        Err(err) => {
+                            error_msg
+                                .push_str(&format!("Error loading '{}': {}\n", file_path, err));
+                            render_error = true;
+                            None
                         }
                     })
                     .collect()
-               
             }
             None => Vec::new(),
         };
-        
-        for (doc, stack) in old_docs.iter_mut().zip(undo_history) {
-            doc.state.undo_stack =stack;
-        }
-        
 
-        let new_docs: Vec<Document> = files.iter()
-            .filter_map(|file_path| {
-                match Document::new(file_path) {
-                    Ok(doc) => Some(doc),
-                    Err(err) => {
-                        error_msg.push_str(&format!("Error loading '{}': {}\n", file_path, err));
-                        render_error = true;
-                        None
-                    }
+        for (doc, stack) in old_docs.iter_mut().zip(undo_history) {
+            doc.state.undo_stack = stack;
+        }
+
+        let new_docs: Vec<Document> = files
+            .iter()
+            .filter_map(|file_path| match Document::new(file_path) {
+                Ok(doc) => Some(doc),
+                Err(err) => {
+                    error_msg.push_str(&format!("Error loading '{}': {}\n", file_path, err));
+                    render_error = true;
+                    None
                 }
             })
             .collect();
@@ -96,21 +95,20 @@ impl App {
                 popup_message: &self.popup_message,
                 focus: &self.focus,
             };
-            
-            terminal.draw(|f: &mut Frame<'_>| 
-            
-            {
-                let layout = render::render_ui(f, &ctx);
-                self.window_height = layout.editor_area.height;
-            }
-            ).unwrap();
+
+            terminal
+                .draw(|f: &mut Frame<'_>| {
+                    let layout = render::render_ui(f, &ctx);
+                    self.window_height = layout.editor_area.height;
+                })
+                .unwrap();
             for doc in &mut self.documents {
                 doc.state.window_height = self.window_height as usize;
             }
             if self.exit_requested && !self.show_popup {
                 self.exit().unwrap();
             }
-            self.handle_events()?;        
+            self.handle_events()?;
         }
         Ok(())
     }
@@ -170,46 +168,53 @@ impl App {
                         if offset + active_doc.state.curs_y >= active_doc.content.len() {
                             // Add a new empty line if the cursor is beyond the current content
                             active_doc.content.push(String::new());
-                            active_doc.state.undo_stack.push(
-                                EditOp::SplitLine { 
-                                    first_line: offset + active_doc.state.curs_y,
-                                    second_line: offset + active_doc.state.curs_y + 1, 
-                                    applied: false 
-                                }
-                            );
+                            active_doc.state.undo_stack.push(EditOp::SplitLine {
+                                first_line: offset + active_doc.state.curs_y,
+                                second_line: offset + active_doc.state.curs_y + 1,
+                                applied: false,
+                            });
                             active_doc.state.curs_y = active_doc.content.len() - offset - 1;
                         } else {
-                            let current_line = &mut active_doc.content[offset + active_doc.state.curs_y];
+                            let current_line =
+                                &mut active_doc.content[offset + active_doc.state.curs_y];
                             if active_doc.state.curs_x >= current_line.len() {
                                 // If pressing enter at the end of the line, insert an empty line after
-                                active_doc.content.insert(offset + active_doc.state.curs_y + 1, String::new());
-                                if active_doc.state.curs_y < self.window_height as usize - 2 &&
-                                   offset + active_doc.state.curs_y < active_doc.content.len() - 1 {
+                                active_doc
+                                    .content
+                                    .insert(offset + active_doc.state.curs_y + 1, String::new());
+                                if active_doc.state.curs_y < self.window_height as usize - 2
+                                    && offset + active_doc.state.curs_y
+                                        < active_doc.content.len() - 1
+                                {
                                     active_doc.state.curs_y += 1;
-                                } else if active_doc.state.curs_y == self.window_height as usize - 2 {
+                                } else if active_doc.state.curs_y == self.window_height as usize - 2
+                                {
                                     active_doc.state.scroll_offset += 1;
                                 }
                             } else {
                                 // Split the current line at the cursor position
                                 let new_line = current_line.split_off(active_doc.state.curs_x);
-                                active_doc.content.insert(offset + active_doc.state.curs_y + 1, new_line);
-                                if active_doc.state.curs_y < self.window_height as usize - 2 &&
-                                   offset + active_doc.state.curs_y < active_doc.content.len() - 1 {
+                                active_doc
+                                    .content
+                                    .insert(offset + active_doc.state.curs_y + 1, new_line);
+                                if active_doc.state.curs_y < self.window_height as usize - 2
+                                    && offset + active_doc.state.curs_y
+                                        < active_doc.content.len() - 1
+                                {
                                     active_doc.state.curs_y += 1;
-                                } else if active_doc.state.curs_y == self.window_height as usize - 2 {
+                                } else if active_doc.state.curs_y == self.window_height as usize - 2
+                                {
                                     active_doc.state.scroll_offset += 1;
                                 }
                             }
-                            active_doc.state.undo_stack.push(
-                                EditOp::SplitLine { 
-                                    first_line: offset + active_doc.state.curs_y.saturating_sub(1),
-                                    second_line: offset + active_doc.state.curs_y, 
-                                    applied: false 
-                                }
-                            );
+                            active_doc.state.undo_stack.push(EditOp::SplitLine {
+                                first_line: offset + active_doc.state.curs_y.saturating_sub(1),
+                                second_line: offset + active_doc.state.curs_y,
+                                applied: false,
+                            });
                         }
                         active_doc.state.curs_x = 0;
-                        
+
                         self.documents[self.active].update_content();
                     }
                 }
@@ -229,7 +234,7 @@ impl App {
             (KeyCode::Char(c), KeyModifiers::ALT) if c.is_ascii_digit() => {
                 let index = c.to_digit(10).unwrap() as usize;
                 if index > 0 && index <= self.documents.len() {
-                    self.change(index-1);
+                    self.change(index - 1);
                 }
             }
 
@@ -243,12 +248,10 @@ impl App {
             (KeyCode::Right | KeyCode::Left | KeyCode::Up | KeyCode::Down, KeyModifiers::NONE) => {
                 match key_event.code {
                     KeyCode::Right => self.move_curs(CursorDirection::Right),
-                    KeyCode::Left => self.move_curs
-                    (CursorDirection::Left),
+                    KeyCode::Left => self.move_curs(CursorDirection::Left),
                     KeyCode::Down => self.move_curs(CursorDirection::Down),
-                    KeyCode::Up => self.move_curs
-                    (CursorDirection::Up),
-                    
+                    KeyCode::Up => self.move_curs(CursorDirection::Up),
+
                     _ => {}
                 }
             }
@@ -272,7 +275,8 @@ impl App {
                                 let to_move_up = active_doc.content[idx].clone();
                                 active_doc.content.remove(idx);
                                 active_doc.state.curs_y -= 1;
-                                let new_idx = active_doc.state.scroll_offset + active_doc.state.curs_y;
+                                let new_idx =
+                                    active_doc.state.scroll_offset + active_doc.state.curs_y;
                                 active_doc.state.undo_stack.push(EditOp::MergeLines {
                                     merged_line: new_idx,
                                     merge_point,
@@ -316,14 +320,12 @@ impl App {
                     }
                 }
             }
-            (KeyCode::Char('s'), KeyModifiers::CONTROL) =>{
-                self.documents[self.active].save_file().unwrap_or_else(
-                    |e| self.throw_error(e)
-                )
-            }
+            (KeyCode::Char('s'), KeyModifiers::CONTROL) => self.documents[self.active]
+                .save_file()
+                .unwrap_or_else(|e| self.throw_error(e)),
             (KeyCode::Char('z') | KeyCode::Char('y'), KeyModifiers::CONTROL) => {
-                match key_event.code{
-                    KeyCode::Char('z') =>{
+                match key_event.code {
+                    KeyCode::Char('z') => {
                         self.documents[self.active].undo();
                     }
                     KeyCode::Char('y') => {
@@ -332,42 +334,42 @@ impl App {
                     _ => {}
                 }
             }
-            (KeyCode::Char('n') | KeyCode::Char('m'), KeyModifiers::ALT  ) =>{
+            (KeyCode::Char('n') | KeyCode::Char('m'), KeyModifiers::ALT) => {
                 let active_doc = &mut self.documents[self.active];
                 if active_doc.state.find_active {
-                        let h = active_doc.state.highlights[active_doc.state.current_match];
-                        if key_event.code == KeyCode::Char('m') && key_event.modifiers == KeyModifiers::ALT {
-                            active_doc.adjust_cursor(
-                                h.0, h.2, false);
-                                active_doc.state.current_match = active_doc.state.current_match.checked_sub(1)
-                                    .unwrap_or_else(|| { active_doc.unhighlight(); 0 });
-
-                        }
-                        else if key_event.code == KeyCode::Char('n') && key_event.modifiers == KeyModifiers::ALT{
-                            if active_doc.state.current_match < active_doc.state.highlights.len()-1{
-
-                                active_doc.adjust_cursor(
-                                    h.0, h.2, false);
-                                    active_doc.state.current_match+=1;
-                                }
-                            else{
+                    let h = active_doc.state.highlights[active_doc.state.current_match];
+                    if key_event.code == KeyCode::Char('m')
+                        && key_event.modifiers == KeyModifiers::ALT
+                    {
+                        active_doc.adjust_cursor(h.0, h.2, false);
+                        active_doc.state.current_match = active_doc
+                            .state
+                            .current_match
+                            .checked_sub(1)
+                            .unwrap_or_else(|| {
                                 active_doc.unhighlight();
-                            }
+                                0
+                            });
+                    } else if key_event.code == KeyCode::Char('n')
+                        && key_event.modifiers == KeyModifiers::ALT
+                    {
+                        if active_doc.state.current_match < active_doc.state.highlights.len() - 1 {
+                            active_doc.adjust_cursor(h.0, h.2, false);
+                            active_doc.state.current_match += 1;
+                        } else {
+                            active_doc.unhighlight();
                         }
+                    }
                 }
             }
             // Handle regular character input
             (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
                 match self.focus {
-                    Windows::Command => {
-                        match key_event.modifiers{
-                            KeyModifiers::SHIFT => self.input_buffer.push(c.to_ascii_uppercase()),
-                            KeyModifiers::NONE => self.input_buffer.push(c),
-                            _=>{}
-                            
-                        }
-                        
-                    }
+                    Windows::Command => match key_event.modifiers {
+                        KeyModifiers::SHIFT => self.input_buffer.push(c.to_ascii_uppercase()),
+                        KeyModifiers::NONE => self.input_buffer.push(c),
+                        _ => {}
+                    },
                     Windows::Editor => {
                         let active_doc = &mut self.documents[self.active];
                         active_doc.unhighlight();
@@ -381,30 +383,33 @@ impl App {
                         active_doc.content[offset + active_doc.state.curs_y].insert(
                             active_doc.state.curs_x,
                             if key_event.modifiers.contains(KeyModifiers::SHIFT) {
-                                active_doc.state.undo_stack.push(EditOp::InsertChar 
-                                    { line: offset + active_doc.state.curs_y, col: active_doc.state.curs_x, ch: c.to_ascii_uppercase(), applied: false });
+                                active_doc.state.undo_stack.push(EditOp::InsertChar {
+                                    line: offset + active_doc.state.curs_y,
+                                    col: active_doc.state.curs_x,
+                                    ch: c.to_ascii_uppercase(),
+                                    applied: false,
+                                });
                                 c.to_ascii_uppercase()
                             } else {
-                                active_doc.state.undo_stack.push(EditOp::InsertChar 
-                                    { line: offset + active_doc.state.curs_y, col: active_doc.state.curs_x, ch: c, applied:false });
+                                active_doc.state.undo_stack.push(EditOp::InsertChar {
+                                    line: offset + active_doc.state.curs_y,
+                                    col: active_doc.state.curs_x,
+                                    ch: c,
+                                    applied: false,
+                                });
                                 c
                             },
                         );
-                        
 
                         // Update the document content and move the cursor
                         active_doc.update_content();
                         self.move_curs(CursorDirection::Right);
-                        
                     }
                 }
             }
             _ => {}
         }
-       
     }
-    
-    
 
     pub fn move_curs(&mut self, direction: CursorDirection) {
         // Get the currently active document
@@ -416,37 +421,46 @@ impl App {
                     }
                 }
                 CursorDirection::Right => {
-                    if doc.content[doc.state.scroll_offset+ doc.state.curs_y].len()+1 > doc.state.curs_x + 1{
-                    doc.state.curs_x += 1;
+                    if doc.content[doc.state.scroll_offset + doc.state.curs_y].len() + 1
+                        > doc.state.curs_x + 1
+                    {
+                        doc.state.curs_x += 1;
                     }
                 }
                 CursorDirection::Up => {
-                    
                     if doc.state.curs_y > 0 {
-              
                         doc.state.curs_y -= 1;
-                        if doc.state.curs_x > doc.content[doc.state.scroll_offset+ doc.state.curs_y].len() {
-                            doc.state.curs_x = doc.content[ doc.state.scroll_offset+doc.state.curs_y].len();
+                        if doc.state.curs_x
+                            > doc.content[doc.state.scroll_offset + doc.state.curs_y].len()
+                        {
+                            doc.state.curs_x =
+                                doc.content[doc.state.scroll_offset + doc.state.curs_y].len();
                         }
-                    } 
-                     else{
+                    } else {
                         doc.state.scroll_offset = doc.state.scroll_offset.saturating_sub(1);
-                        doc.state.curs_x = doc.content[doc.state.curs_y + doc.state.scroll_offset].len().min(doc.state.curs_x);
-                     }
+                        doc.state.curs_x = doc.content[doc.state.curs_y + doc.state.scroll_offset]
+                            .len()
+                            .min(doc.state.curs_x);
+                    }
                 }
                 CursorDirection::Down => {
-                    if doc.state.curs_y < self.window_height as usize - 2 && 
-                       doc.state.curs_y + doc.state.scroll_offset < doc.content.len()-1 {
+                    if doc.state.curs_y < self.window_height as usize - 2
+                        && doc.state.curs_y + doc.state.scroll_offset < doc.content.len() - 1
+                    {
                         doc.state.curs_y += 1;
-                        if doc.state.curs_x > doc.content[doc.state.scroll_offset + doc.state.curs_y].len() {
-                            doc.state.curs_x = doc.content[doc.state.scroll_offset + doc.state.curs_y].len();
+                        if doc.state.curs_x
+                            > doc.content[doc.state.scroll_offset + doc.state.curs_y].len()
+                        {
+                            doc.state.curs_x =
+                                doc.content[doc.state.scroll_offset + doc.state.curs_y].len();
                         }
-                    } else if doc.state.curs_y + doc.state.scroll_offset < doc.content.len()-1 {
+                    } else if doc.state.curs_y + doc.state.scroll_offset < doc.content.len() - 1 {
                         doc.state.scroll_offset += 1;
-                        
-                        doc.state.curs_x = doc.content[doc.state.curs_y + doc.state.scroll_offset].len().min(doc.state.curs_x);
+
+                        doc.state.curs_x = doc.content[doc.state.curs_y + doc.state.scroll_offset]
+                            .len()
+                            .min(doc.state.curs_x);
                     }
-                   
                 }
             }
         }
@@ -460,11 +474,13 @@ impl App {
         Ok(())
     }
     pub fn list_docs(&mut self) -> Vec<String> {
-        self.documents.iter().map(|doc| doc.file_path.clone()).collect()
+        self.documents
+            .iter()
+            .map(|doc| doc.file_path.clone())
+            .collect()
     }
-    
-    
-    pub fn close(&mut self){
+
+    pub fn close(&mut self) {
         if self.documents.len() == 0 {
             return;
         }
@@ -473,20 +489,19 @@ impl App {
         return;
     }
 
-
     pub fn view(&self) -> Vec<String> {
-    if self.documents.is_empty() {
-        return vec![];
+        if self.documents.is_empty() {
+            return vec![];
+        }
+        let active_doc = &self.documents[self.active];
+        active_doc
+            .content
+            .iter()
+            .enumerate()
+            .map(|(index, line)| format!("{}: {}", index + 1, line))
+            .collect()
     }
-    let active_doc = &self.documents[self.active];
-    active_doc
-        .content
-        .iter()
-        .enumerate()
-        .map(|(index, line)| format!("{}: {}", index + 1, line))
-        .collect()
-    }
-    pub fn change(&mut self, index: usize){
+    pub fn change(&mut self, index: usize) {
         self.active = index;
     }
     pub fn command_parse(&self, cmd: &str) -> Result<Option<Operations>, Box<dyn Error>> {
@@ -502,17 +517,16 @@ impl App {
             Ok(Some(Operations::Find(String::from(args[0]))))
         } else if command.trim() == "count" {
             Ok(Some(Operations::WordCount(String::from(args[0]))))
-        }else if command.trim() == "list" {
-                Ok(Some(Operations::List))
+        } else if command.trim() == "list" {
+            Ok(Some(Operations::List))
         } else if command.trim() == "exit" {
             Ok(Some(Operations::Exit))
-        }else if command.trim() == "close" {
+        } else if command.trim() == "close" {
             Ok(Some(Operations::Close))
         } else if command.trim() == "change" {
             let index = args[0].parse::<usize>()?;
             Ok(Some(Operations::Change(index)))
-        }
-         else {
+        } else {
             Err("Invalid command ".into())
         }
     }
@@ -527,13 +541,10 @@ impl App {
                     }
                 }
                 Some(Operations::Find(word)) => {
-                    let doc =&mut self.documents[self.active];
+                    let doc = &mut self.documents[self.active];
                     let matches = doc.find(&word);
                     doc.highlight(matches);
-                    self.focus=Windows::Editor;
-                    
-
-                 
+                    self.focus = Windows::Editor;
                 }
                 Some(Operations::WordCount(word)) => {
                     let msg = self.documents[self.active].word_count(&word);
@@ -562,18 +573,17 @@ impl App {
     pub fn try_exit(&mut self) {
         let doc = &self.documents[self.active];
         if doc.state.is_dirty {
-            self.show_popup =  true;
+            self.show_popup = true;
             self.exit_requested = true;
             self.popup_message = String::from("Save befor exiting?(y/n)");
-        }
-        else {
+        } else {
             self.exit().unwrap();
         }
     }
-   
-    pub fn exit(&mut self) -> Result<(), Box<dyn Error>>{
+
+    pub fn exit(&mut self) -> Result<(), Box<dyn Error>> {
         session::save_session(self)?;
-        self.running=false;
+        self.running = false;
         Ok(())
     }
 }

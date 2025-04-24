@@ -1,19 +1,27 @@
-
-use ratatui::{layout::{Constraint, Direction, Layout, Rect}, style::{Color, Style}, text::{Line, Text}, widgets::{Block, Borders, Paragraph}, Frame};
+use ratatui::{
+    Frame,
+    layout::{Constraint, Direction, Layout, Rect},
+    style::{Color, Style},
+    text::Text,
+    widgets::{Block, Borders, Paragraph},
+};
 
 use crate::*;
 
-
-
 pub fn render_tab_bar(f: &mut Frame<'_>, area: Rect, ctx: &data_models::RenderContext) {
     let pad = 6;
+
     // Create a vector with tabs, each as a tuple containing the global index and tab details.
     let opend_tabs: Vec<(usize, (String, usize))> = ctx
         .documents
         .iter()
         .enumerate()
         .map(|(i, d)| {
-            let file_name = get_file_name(d.file_path.clone());
+
+            let mut file_name = get_file_name(d.file_path.clone());
+            if d.state.is_dirty {
+                file_name += "*";
+            }
             (i, (file_name.clone(), file_name.len() + pad))
         })
         .collect();
@@ -65,10 +73,9 @@ pub fn render_tab_bar(f: &mut Frame<'_>, area: Rect, ctx: &data_models::RenderCo
         } else {
             0
         };
-        remaining = remaining+2;
-            // Use at least a few columns for the marker.
-            tabs_to_render.push((usize::MAX, ("...".to_string(), remaining)));
-        
+        remaining = remaining + 2;
+        // Use at least a few columns for the marker.
+        tabs_to_render.push((usize::MAX, ("...".to_string(), remaining)));
     }
 
     let constraints: Vec<Constraint> = tabs_to_render

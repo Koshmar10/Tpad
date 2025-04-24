@@ -1,16 +1,22 @@
-
 use std::{error::Error, fs, os::unix::fs::MetadataExt};
 
-use serde::{Deserialize, Serialize};
-
 use crate::data_models::*;
-
 
 impl EditorState {
     pub fn new(past_state: Option<EditorState>) -> EditorState {
         match past_state {
             Some(state) => state,
-            None => EditorState { curs_x: 0, curs_y: 0, is_dirty: false, scroll_offset: 0, window_height: 0, find_active : false, current_match : 0, highlights: Vec::new(), undo_stack:UndoStack::new(None)  }
+            None => EditorState {
+                curs_x: 0,
+                curs_y: 0,
+                is_dirty: false,
+                scroll_offset: 0,
+                window_height: 0,
+                find_active: false,
+                current_match: 0,
+                highlights: Vec::new(),
+                undo_stack: UndoStack::new(None),
+            },
         }
     }
 }
@@ -18,7 +24,10 @@ impl UndoStack {
     pub fn new(past_stack: Option<UndoStack>) -> UndoStack {
         match past_stack {
             Some(state) => state,
-            None => UndoStack { stack:Vec::new(), cursor: 0}
+            None => UndoStack {
+                stack: Vec::new(),
+                cursor: 0,
+            },
         }
     }
     pub fn push(&mut self, op: EditOp) {
@@ -28,26 +37,21 @@ impl UndoStack {
         self.stack.push(op);
         self.cursor = self.stack.len();
     }
-    
 }
-
-
 
 impl Document {
     pub fn new(file_path: &String) -> Result<Document, Box<dyn Error>> {
         let contents = fs::read_to_string(file_path)?;
         let metadata = fs::metadata(file_path)?;
         let size = metadata.size();
-        let lines = contents.lines().map(|line| line.to_string()).
-        collect();
+        let lines = contents.lines().map(|line| line.to_string()).collect();
         let permissions = permission_string(metadata.mode(), metadata.is_dir());
         Ok(Document {
             file_path: file_path.clone(),
             permissions,
-            size:size,
+            size: size,
             content: lines,
-            state: EditorState::new(None)
-
+            state: EditorState::new(None),
         })
     }
     pub fn update_content(&mut self) {
@@ -57,18 +61,18 @@ impl Document {
             .content
             .iter()
             .map(|line| {
-            if line.is_empty() {
-                String::new() // Preserve empty lines
-            } else {
-                line.clone()
-            }
+                if line.is_empty() {
+                    String::new() // Preserve empty lines
+                } else {
+                    line.clone()
+                }
             })
             .collect();
         self.content = new_content;
         // Update the file size based on the new content
         self.size = self.content.join("\n").len() as u64;
     }
-    pub fn save_file(&mut self) -> Result<(), Box<dyn Error>>{
+    pub fn save_file(&mut self) -> Result<(), Box<dyn Error>> {
         if self.state.is_dirty {
             let content_sring = self.content.join("\n");
             let to = self.file_path.clone();
@@ -96,37 +100,42 @@ impl Document {
         vec![msg]
     }
 
-    pub fn find(&self, word: &str) -> Vec<(usize, usize, usize)>  {
-        let mut  results = Vec::new();
+    pub fn find(&self, word: &str) -> Vec<(usize, usize, usize)> {
+        let mut results = Vec::new();
         let word_size = word.len();
 
         for (line_index, line) in self.content.iter().enumerate() {
-            let current_matches :Vec<(usize, usize, usize)>= 
-            line.match_indices(word).map(|(start, _)| (line_index, start, start+word_size)).collect();
+            let current_matches: Vec<(usize, usize, usize)> = line
+                .match_indices(word)
+                .map(|(start, _)| (line_index, start, start + word_size))
+                .collect();
             results.extend(current_matches);
         }
         results
     }
-    pub fn highlight(&mut self, v: Vec<(usize,usize,usize)>){
+    pub fn highlight(&mut self, v: Vec<(usize, usize, usize)>) {
         self.state.highlights = v;
-        self.state.find_active=true;
-        
-
+        self.state.find_active = true;
     }
-    pub fn unhighlight(&mut self){
+    pub fn unhighlight(&mut self) {
         self.state.highlights.clear();
-        self.state.find_active=false;
+        self.state.find_active = false;
     }
-    pub fn undo(&mut self){
+    pub fn undo(&mut self) {
         // Scope the mutable borrow of the undo stack and extract the line, col, and add_offset flag
         let adjust = {
             let op_stack = &mut self.state.undo_stack;
-            if op_stack.stack.is_empty(){
+            if op_stack.stack.is_empty() {
                 return;
             }
             let index = op_stack.cursor.saturating_sub(1);
             match &mut op_stack.stack[index] {
-                EditOp::InsertChar { line, col, ch: _, applied } => {
+                EditOp::InsertChar {
+                    line,
+                    col,
+                    ch: _,
+                    applied,
+                } => {
                     if !*applied {
                         self.content[*line].remove(*col);
                         *applied = true;
@@ -136,7 +145,12 @@ impl Document {
                         None
                     }
                 }
-                EditOp::DeleteChar { line, col, ch, applied } => {
+                EditOp::DeleteChar {
+                    line,
+                    col,
+                    ch,
+                    applied,
+                } => {
                     if !*applied {
                         self.content[*line].insert(*col, *ch);
                         *applied = true;
@@ -146,7 +160,11 @@ impl Document {
                         None
                     }
                 }
-                EditOp::SplitLine { first_line, second_line, applied } => {
+                EditOp::SplitLine {
+                    first_line,
+                    second_line,
+                    applied,
+                } => {
                     if !*applied {
                         let mut add_offset = false;
                         if self.content[*second_line].len() != 0 {
@@ -166,7 +184,11 @@ impl Document {
                         None
                     }
                 }
-                EditOp::MergeLines { merged_line, merge_point, applied } => {
+                EditOp::MergeLines {
+                    merged_line,
+                    merge_point,
+                    applied,
+                } => {
                     if !*applied {
                         // Undo a merge by splitting the merged line at merge_point.
                         let m_line = *merged_line;
@@ -179,7 +201,6 @@ impl Document {
                         None
                     }
                 }
-                _ => None,
             }
         };
         if let Some((line, col, add_offset)) = adjust {
@@ -188,7 +209,7 @@ impl Document {
         self.state.undo_stack.cursor = self.state.undo_stack.cursor.saturating_sub(1);
         self.update_content();
     }
- 
+
     pub fn redo(&mut self) {
         // Scope the mutable borrow of the undo stack and extract the line, col, and add_offset flag
         let adjust = {
@@ -197,7 +218,12 @@ impl Document {
                 return;
             }
             match &mut op_stack.stack[op_stack.cursor] {
-                EditOp::InsertChar { line, col, ch, applied } => {
+                EditOp::InsertChar {
+                    line,
+                    col,
+                    ch,
+                    applied,
+                } => {
                     if *applied {
                         self.content[*line].insert(*col, *ch);
                         *applied = false;
@@ -207,7 +233,12 @@ impl Document {
                         None
                     }
                 }
-                EditOp::DeleteChar { line, col, ch, applied } => {
+                EditOp::DeleteChar {
+                    line,
+                    col,
+                    ch: _,
+                    applied,
+                } => {
                     if *applied {
                         self.content[*line].remove(*col);
                         *applied = false;
@@ -217,7 +248,11 @@ impl Document {
                         None
                     }
                 }
-                EditOp::MergeLines { merged_line, merge_point, applied } => {
+                EditOp::MergeLines {
+                    merged_line,
+                    merge_point: _,
+                    applied,
+                } => {
                     if *applied {
                         // Redo a merge by removing the line after merged_line and appending its content.
                         let m_line = *merged_line;
@@ -244,7 +279,7 @@ impl Document {
     // Helper function to adjust the cursor position based on an absolute line and column.
     pub fn adjust_cursor(&mut self, op_line: usize, op_col: usize, add_offset: bool) {
         // If the operation line is above the current viewport, scroll up.
-        let window_height = self.state.window_height -2;
+        let window_height = self.state.window_height - 2;
         if op_line < self.state.scroll_offset {
             self.state.scroll_offset = op_line;
         // If the operation line is below the visible area, scroll down.
@@ -261,7 +296,7 @@ impl Document {
 pub fn permission_string(mode: u32, is_dir: bool) -> String {
     let file_type = if is_dir { 'd' } else { '-' };
 
-    let rwx = |bit, r, w, x| {
+    let rwx = |_bit, r, w, x| {
         format!(
             "{}{}{}",
             if mode & r != 0 { 'r' } else { '-' },
@@ -278,4 +313,3 @@ pub fn permission_string(mode: u32, is_dir: bool) -> String {
         rwx(mode, 0o004, 0o002, 0o001), // Others
     )
 }
-
