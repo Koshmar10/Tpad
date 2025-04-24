@@ -1,3 +1,4 @@
+use copypasta::ClipboardContext;
 use ratatui::{DefaultTerminal, Frame};
 use std::error::Error;
 
@@ -9,6 +10,7 @@ use crate::data_models::*;
 
 use crate::session;
 
+use crate::theme::Theme;
 use crate::ui::render;
 
 impl App {
@@ -67,6 +69,8 @@ impl App {
         }
 
         App {
+            clipboard: ClipboardContext::new().unwrap(),
+            theme:Theme::load(),
             window_height: 0,
             documents,
             active: 0,
@@ -78,12 +82,15 @@ impl App {
             exit_requested: false,
             popup_message: String::new(),
             focus: Windows::Editor,
+            curs_x: 0,
+    
         }
     }
 
     pub fn run(&mut self, mut terminal: DefaultTerminal) -> Result<()> {
         while self.running {
             let ctx = RenderContext {
+                theme: &self.theme,
                 documents: &self.documents,
                 input_buffer: &self.input_buffer,
                 show_popup: &self.show_popup,
@@ -94,6 +101,7 @@ impl App {
                 exit_requested: &self.exit_requested,
                 popup_message: &self.popup_message,
                 focus: &self.focus,
+                curs_x: &self.curs_x,
             };
 
             terminal
@@ -159,6 +167,7 @@ impl App {
                     Windows::Command => {
                         let cmd = self.input_buffer.clone();
                         self.command_run(&cmd);
+                        self.curs_x =0;
                         self.input_buffer.clear();
                     }
                     Windows::Editor => {
@@ -247,22 +256,70 @@ impl App {
                 }
             }
 
-            (KeyCode::Right | KeyCode::Left | KeyCode::Up | KeyCode::Down, KeyModifiers::NONE) => {
-                match key_event.code {
-                    KeyCode::Right => self.move_curs(CursorDirection::Right),
-                    KeyCode::Left => self.move_curs(CursorDirection::Left),
-                    KeyCode::Down => self.move_curs(CursorDirection::Down),
-                    KeyCode::Up => self.move_curs(CursorDirection::Up),
+            (KeyCode::Right | KeyCode::Left | KeyCode::Up | KeyCode::Down, KeyModifiers::SHIFT | KeyModifiers::NONE) => {
+                match  self.focus {
+                    Windows::Command =>{
+                        match key_event.code {
+                            KeyCode::Right => {
+                                if self.curs_x+1 <= self.input_buffer.len() {
+                                    self.curs_x+=1
+                                }
+                            },
+                            KeyCode::Left => {
+                                if self.curs_x-1 > 0 {
+                                    self.curs_x-=1
+                                }
+                            },
 
-                    _ => {}
+                            _ => {}
+                        }
+                    }
+                    Windows::Editor =>{
+                        
+                        let active_doc = &mut self.documents[self.active];
+                        match (key_event.code, key_event.modifiers)  {
+                            (KeyCode::Right, KeyModifiers::NONE) => move_curs(active_doc, CursorDirection::Right),
+                            (KeyCode::Left, KeyModifiers::NONE) => move_curs(active_doc, CursorDirection::Left),
+                            (KeyCode::Down, KeyModifiers::NONE) => move_curs(active_doc, CursorDirection::Down),
+                            (KeyCode::Up, KeyModifiers::NONE) => move_curs(active_doc, CursorDirection::Up),
+                            (KeyCode::Right, KeyModifiers::SHIFT) => 
+                            {
+                                
+                                active_doc.state.start_selection(active_doc.state.curs_y, active_doc.state.curs_x);
+                                move_curs(active_doc, CursorDirection::Right);
+                                active_doc.state.update_selection_end(active_doc.state.curs_y, active_doc.state.curs_x);
+                            },
+                            (KeyCode::Left, KeyModifiers::SHIFT) => {
+                                active_doc.state.start_selection(active_doc.state.curs_y, active_doc.state.curs_x);
+                                move_curs(active_doc, CursorDirection::Left);
+                                active_doc.state.update_selection_end(active_doc.state.curs_y, active_doc.state.curs_x);
+                            },
+                            (KeyCode::Down, KeyModifiers::SHIFT) => {
+                                active_doc.state.start_selection(active_doc.state.curs_y, active_doc.state.curs_x);
+                                move_curs(active_doc, CursorDirection::Down);
+                                active_doc.state.update_selection_end(active_doc.state.curs_y, active_doc.state.curs_x);
+                            },
+                            (KeyCode::Up, KeyModifiers::SHIFT)  => {
+                                active_doc.state.start_selection(active_doc.state.curs_y, active_doc.state.curs_x);
+                                move_curs(active_doc, CursorDirection::Up);
+                                active_doc.state.update_selection_end(active_doc.state.curs_y, active_doc.state.curs_x);
+                            },
+                            _ => {}
+                        }
+                    }
                 }
+                
             }
 
             // Handle Backspace to remove the last character from input buffer
             (KeyCode::Backspace, KeyModifiers::NONE) => {
                 match self.focus {
                     Windows::Command => {
-                        self.input_buffer.pop();
+                        if self.input_buffer.is_empty() {
+                            return;
+                        }
+                        self.input_buffer.remove(self.curs_x.saturating_sub(1));
+                        self.curs_x = self.curs_x.saturating_sub(1);
                     }
                     Windows::Editor => {
                         let active_doc = &mut self.documents[self.active];
@@ -315,7 +372,7 @@ impl App {
                                         applied: false,
                                     });
                                     active_doc.update_content();
-                                    self.move_curs(CursorDirection::Left);
+                                    move_curs(active_doc, CursorDirection::Left);
                                 }
                             }
                         }
@@ -339,28 +396,28 @@ impl App {
             (KeyCode::Char('n') | KeyCode::Char('m'), KeyModifiers::ALT) => {
                 let active_doc = &mut self.documents[self.active];
                 if active_doc.state.find_active {
-                    let h = active_doc.state.highlights[active_doc.state.current_match];
-                    if key_event.code == KeyCode::Char('m')
-                        && key_event.modifiers == KeyModifiers::ALT
-                    {
-                        active_doc.adjust_cursor(h.0, h.2, false);
-                        active_doc.state.current_match = active_doc
-                            .state
-                            .current_match
-                            .checked_sub(1)
-                            .unwrap_or_else(|| {
-                                active_doc.unhighlight();
-                                0
-                            });
-                    } else if key_event.code == KeyCode::Char('n')
-                        && key_event.modifiers == KeyModifiers::ALT
-                    {
-                        if active_doc.state.current_match < active_doc.state.highlights.len() - 1 {
-                            active_doc.adjust_cursor(h.0, h.2, false);
-                            active_doc.state.current_match += 1;
-                        } else {
-                            active_doc.unhighlight();
+                    match key_event.code {
+                        KeyCode::Char('n') => {
+                            if !active_doc.state.highlights.is_empty() {
+                                let len = active_doc.state.highlights.len();
+                                active_doc.state.current_match = (active_doc.state.current_match + 1) % len;
+                                let h = active_doc.state.highlights[active_doc.state.current_match];
+                                active_doc.adjust_cursor(h.0, h.2, false);
+                            }
                         }
+                        KeyCode::Char('m') => {
+                            if !active_doc.state.highlights.is_empty() {
+                                let len = active_doc.state.highlights.len();
+                                if active_doc.state.current_match == 0 {
+                                    active_doc.state.current_match = len - 1;
+                                } else {
+                                    active_doc.state.current_match -= 1;
+                                }
+                                let h = active_doc.state.highlights[active_doc.state.current_match];
+                                active_doc.adjust_cursor(h.0, h.2, false);
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -368,9 +425,15 @@ impl App {
             (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
                 match self.focus {
                     Windows::Command => match key_event.modifiers {
-                        KeyModifiers::SHIFT => self.input_buffer.push(c.to_ascii_uppercase()),
-                        KeyModifiers::NONE => self.input_buffer.push(c),
-                        _ => {}
+                        KeyModifiers::SHIFT => {
+                            self.input_buffer.insert(self.curs_x, c.to_ascii_uppercase());
+                            self.curs_x+=1;
+                        },
+                        KeyModifiers::NONE => {
+                            self.input_buffer.insert(self.curs_x, c);
+                            self.curs_x+=1;
+                        }
+                        _ =>{}
                     },
                     Windows::Editor => {
                         let active_doc = &mut self.documents[self.active];
@@ -405,7 +468,7 @@ impl App {
 
                         // Update the document content and move the cursor
                         active_doc.update_content();
-                        self.move_curs(CursorDirection::Right);
+                        move_curs(active_doc, CursorDirection::Right);
                     }
                 }
             }
@@ -413,65 +476,13 @@ impl App {
         }
     }
 
-    pub fn move_curs(&mut self, direction: CursorDirection) {
-        // Get the currently active document
-        if let Some(doc) = self.documents.get_mut(self.active) {
-            match direction {
-                CursorDirection::Left => {
-                    if doc.state.curs_x > 0 {
-                        doc.state.curs_x -= 1;
-                    }
-                }
-                CursorDirection::Right => {
-                    if doc.content[doc.state.scroll_offset + doc.state.curs_y].len() + 1
-                        > doc.state.curs_x + 1
-                    {
-                        doc.state.curs_x += 1;
-                    }
-                }
-                CursorDirection::Up => {
-                    if doc.state.curs_y > 0 {
-                        doc.state.curs_y -= 1;
-                        if doc.state.curs_x
-                            > doc.content[doc.state.scroll_offset + doc.state.curs_y].len()
-                        {
-                            doc.state.curs_x =
-                                doc.content[doc.state.scroll_offset + doc.state.curs_y].len();
-                        }
-                    } else {
-                        doc.state.scroll_offset = doc.state.scroll_offset.saturating_sub(1);
-                        doc.state.curs_x = doc.content[doc.state.curs_y + doc.state.scroll_offset]
-                            .len()
-                            .min(doc.state.curs_x);
-                    }
-                }
-                CursorDirection::Down => {
-                    if doc.state.curs_y < self.window_height as usize - 2
-                        && doc.state.curs_y + doc.state.scroll_offset < doc.content.len() - 1
-                    {
-                        doc.state.curs_y += 1;
-                        if doc.state.curs_x
-                            > doc.content[doc.state.scroll_offset + doc.state.curs_y].len()
-                        {
-                            doc.state.curs_x =
-                                doc.content[doc.state.scroll_offset + doc.state.curs_y].len();
-                        }
-                    } else if doc.state.curs_y + doc.state.scroll_offset < doc.content.len() - 1 {
-                        doc.state.scroll_offset += 1;
-
-                        doc.state.curs_x = doc.content[doc.state.curs_y + doc.state.scroll_offset]
-                            .len()
-                            .min(doc.state.curs_x);
-                    }
-                }
-            }
-        }
-    }
-
+    
     pub fn open(&mut self, file_path: &str) -> Result<(), Box<dyn Error>> {
-        let file_path = file_path.to_string();
-        let doc = Document::new(&file_path)?;
-        self.documents.push(doc);
+        let file_paths : Vec<&str>= file_path.split(" ").collect();
+        for file in file_paths{
+            let doc = Document::new(&String::from(file))?;
+            self.documents.push(doc);
+        }
         self.active = self.documents.len() - 1;
         Ok(())
     }
@@ -506,28 +517,33 @@ impl App {
     pub fn change(&mut self, index: usize) {
         self.active = index;
     }
-    pub fn command_parse(&self, cmd: &str) -> Result<Option<Operations>, Box<dyn Error>> {
+    pub fn command_parse(&mut self, cmd: &str) -> Result<Option<Operations>, Box<dyn Error>> {
         let mut parts = cmd.trim().split_whitespace();
         let command = parts.next().unwrap_or("");
         let args: Vec<&str> = parts.collect();
-        if args.len() > 1 {
-            return Err("Too many args".into());
-        }
-        if command.trim() == "open" {
-            Ok(Some(Operations::Open(String::from(args[0]))))
-        } else if command.trim() == "find" {
-            Ok(Some(Operations::Find(String::from(args[0]))))
+       
+        if command.trim() == "o" {
+            Ok(Some(Operations::Open(String::from(args.join(" ")))))
+        } else if command.trim() == "theme" {
+            Ok(Some(Operations::Open(String::from("/home/petru/.config/tpad/theme.toml"))))
+        } 
+        else if command.trim().starts_with('/'){
+            Ok(Some(Operations::Find(String::from(command.trim().trim_start_matches("/")))))
         } else if command.trim() == "count" {
             Ok(Some(Operations::WordCount(String::from(args[0]))))
         } else if command.trim() == "list" {
             Ok(Some(Operations::List))
-        } else if command.trim() == "exit" {
+        } else if command.trim() == "q" {
             Ok(Some(Operations::Exit))
-        } else if command.trim() == "close" {
+        }else if command.trim() == "wq" {
+            self.documents[self.active].save_file()?;
+            Ok(Some(Operations::Exit))
+        } else if command.trim() == "w" {
+            self.documents[self.active].save_file()?;
+            Ok(Some(Operations::None))
+        } 
+        else if command.trim() == "cl" {
             Ok(Some(Operations::Close))
-        } else if command.trim() == "change" {
-            let index = args[0].parse::<usize>()?;
-            Ok(Some(Operations::Change(index)))
         } else {
             Err("Invalid command ".into())
         }
@@ -565,7 +581,8 @@ impl App {
                 Some(Operations::Change(index)) => {
                     self.change(index);
                 }
-                None => (),
+                Some(Operations::None) => {},
+                None => {},
             },
             Err(e) => {
                 self.throw_error(e); // Fixed method name
@@ -588,4 +605,57 @@ impl App {
         self.running = false;
         Ok(())
     }
+}
+pub fn move_curs(active_doc: &mut Document, direction: CursorDirection) {
+    // Get the currently active document
+        match direction {
+            CursorDirection::Left => {
+                if active_doc.state.curs_x > 0 {
+                    active_doc.state.curs_x -= 1;
+                }
+            }
+            CursorDirection::Right => {
+                if active_doc.content[active_doc.state.scroll_offset + active_doc.state.curs_y].len() + 1
+                    > active_doc.state.curs_x + 1
+                {
+                    active_doc.state.curs_x += 1;
+                }
+            }
+            CursorDirection::Up => {
+                if active_doc.state.curs_y > 0 {
+                    active_doc.state.curs_y -= 1;
+                    if active_doc.state.curs_x
+                        > active_doc.content[active_doc.state.scroll_offset + active_doc.state.curs_y].len()
+                    {
+                        active_doc.state.curs_x =
+                            active_doc.content[active_doc.state.scroll_offset + active_doc.state.curs_y].len();
+                    }
+                } else {
+                    active_doc.state.scroll_offset = active_doc.state.scroll_offset.saturating_sub(1);
+                    active_doc.state.curs_x = active_doc.content[active_doc.state.curs_y + active_doc.state.scroll_offset]
+                        .len()
+                        .min(active_doc.state.curs_x);
+                }
+            }
+            CursorDirection::Down => {
+                if active_doc.state.curs_y < active_doc.state.window_height - 2
+                    && active_doc.state.curs_y + active_doc.state.scroll_offset < active_doc.content.len() - 1
+                {
+                    active_doc.state.curs_y += 1;
+                    if active_doc.state.curs_x
+                        > active_doc.content[active_doc.state.scroll_offset + active_doc.state.curs_y].len()
+                    {
+                        active_doc.state.curs_x =
+                            active_doc.content[active_doc.state.scroll_offset + active_doc.state.curs_y].len();
+                    }
+                } else if active_doc.state.curs_y + active_doc.state.scroll_offset < active_doc.content.len() - 1 {
+                    active_doc.state.scroll_offset += 1;
+
+                    active_doc.state.curs_x = active_doc.content[active_doc.state.curs_y + active_doc.state.scroll_offset]
+                        .len()
+                        .min(active_doc.state.curs_x);
+                }
+            }
+        }
+    
 }

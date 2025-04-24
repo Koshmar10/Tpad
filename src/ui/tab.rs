@@ -6,11 +6,14 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
-use crate::*;
+use crate::{theme::hex_to_color, *};
 
 pub fn render_tab_bar(f: &mut Frame<'_>, area: Rect, ctx: &data_models::RenderContext) {
     let pad = 6;
-
+    let active_bg = hex_to_color(ctx.theme.tabs.active_bg.clone());
+    let active_fg = hex_to_color(ctx.theme.tabs.active_fg.clone());
+    let inactive_bg = hex_to_color(ctx.theme.tabs.inactive_bg.clone());
+    let inactive_fg = hex_to_color(ctx.theme.tabs.inactive_fg.clone());
     // Create a vector with tabs, each as a tuple containing the global index and tab details.
     let opend_tabs: Vec<(usize, (String, usize))> = ctx
         .documents
@@ -97,15 +100,15 @@ pub fn render_tab_bar(f: &mut Frame<'_>, area: Rect, ctx: &data_models::RenderCo
             (tab.1.0.clone(), tab.1.1)
         };
         let style = if active_relative_index.is_some() && i == active_relative_index.unwrap() {
-            Color::Yellow
+            (active_bg, active_fg)
         } else {
-            Color::White
+            (inactive_bg, inactive_fg)
         };
-        let tab_widget = Paragraph::new(Text::from(name))
+        let tab_widget = Paragraph::new(Text::from(name).style(style.0))
             .block(Block::default().borders(Borders::TOP | Borders::LEFT | Borders::RIGHT))
             .centered()
             .alignment(ratatui::layout::Alignment::Center)
-            .style(Style::default().fg(style));
+            .style(Style::default().fg(style.1));
         f.render_widget(tab_widget, chunk);
     }
 }

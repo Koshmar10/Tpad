@@ -1,3 +1,6 @@
+use std::fs;
+
+use color_eyre::owo_colors::OwoColorize;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -6,11 +9,14 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
-use crate::data_models::*;
+use crate::{data_models::*, theme::hex_to_color};
 
 pub fn render_doc_view(frame: &mut Frame<'_>, area: Rect, ctx: &RenderContext) {
     let selected_doc = &ctx.documents[*ctx.active];
-
+    let highl = hex_to_color(ctx.theme.editor.highlights.clone());
+    let fg_color = hex_to_color(ctx.theme.editor.foreground.clone());
+    let bg_color = hex_to_color(ctx.theme.editor.background.clone());
+    //fs::write("log.txt", format!("{:?} {:?} {:?}", highl, fg_color, bg_color)).unwrap();
     let doc_view = selected_doc
         .content
         .iter()
@@ -33,18 +39,18 @@ pub fn render_doc_view(frame: &mut Frame<'_>, area: Rect, ctx: &RenderContext) {
                 for &(_, start, end) in highlights.iter() {
                     // Add non-highlighted part before the match.
                     if start > last_end {
-                        spans.push(Span::raw(&line[last_end..start]));
+                        spans.push(Span::styled(&line[last_end..start], Style::default().fg(fg_color)));
                     }
                     // Add highlighted segment.
                     spans.push(Span::styled(
                         &line[start..end],
-                        Style::default().fg(Color::Yellow),
+                        Style::default().fg(highl),
                     ));
                     last_end = end;
                 }
                 // Add remaining part of the line.
                 if last_end < line.len() {
-                    spans.push(Span::raw(&line[last_end..]));
+                    spans.push(Span::styled(&line[last_end..], Style::default().fg(fg_color)));
                 }
                 spans
             })
@@ -52,7 +58,7 @@ pub fn render_doc_view(frame: &mut Frame<'_>, area: Rect, ctx: &RenderContext) {
         .collect::<Vec<Line>>();
 
     let doc_view_slice = &doc_view[selected_doc.state.scroll_offset..];
-    let doc_view_paragraph = Paragraph::new(Text::from_iter(doc_view_slice.iter().cloned()))
+    let doc_view_paragraph = Paragraph::new(Text::from_iter(doc_view_slice.iter().cloned())).style(bg_color)
         .block(Block::default().borders(Borders::TOP | Borders::LEFT | Borders::RIGHT));
 
     let chunks = Layout::default()
@@ -68,7 +74,7 @@ pub fn render_doc_view(frame: &mut Frame<'_>, area: Rect, ctx: &RenderContext) {
         .collect();
     let line_numbers = Text::from(lines);
     let line_numbers_widget =
-        Paragraph::new(line_numbers).block(Block::default().borders(Borders::LEFT | Borders::TOP));
+        Paragraph::new(line_numbers).style(fg_color).block(Block::default().borders(Borders::LEFT | Borders::TOP).style(bg_color));
     frame.render_widget(line_numbers_widget, chunks[0]);
     frame.render_widget(doc_view_paragraph, chunks[1]);
 

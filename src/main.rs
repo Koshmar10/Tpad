@@ -3,6 +3,10 @@ use std::env;
 use color_eyre;
 use ratatui;
 use tpad::*;
+extern crate copypasta;
+
+use copypasta::{ClipboardContext, ClipboardProvider};
+
 
 /*
 Goals

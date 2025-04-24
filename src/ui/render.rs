@@ -1,8 +1,10 @@
-use crate::data_models::RenderContext;
+use crate::data_models::*;
+use crate::theme::hex_to_color;
 use crate::{
     LayoutSnapshot, tpad_error,
     ui::{doc_view::render_doc_view, status::render_status_bar, tab::render_tab_bar},
 };
+use crossterm::terminal::WindowSize;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -32,10 +34,15 @@ pub fn render_ui(f: &mut Frame<'_>, ctx: &RenderContext) -> LayoutSnapshot {
     render_doc_view(f, chunks[2], ctx);
 
     // Render the command line
-    let cmd_text = vec![String::from(": "), ctx.input_buffer.clone()].join(" ");
-    let cmd = Paragraph::new(Text::from(cmd_text)).block(Block::default().borders(Borders::ALL));
-    f.render_widget(cmd, chunks[3]);
+    let cmd_bg = hex_to_color(ctx.theme.command.background.clone());
 
+    let cmd_fg = hex_to_color(ctx.theme.command.foreground.clone());
+    let cmd_text = vec![String::from(": "), ctx.input_buffer.clone()].join("");
+    let cmd = Paragraph::new(Text::from(cmd_text).style(cmd_fg)).block(Block::default().borders(Borders::ALL).style(cmd_bg));
+    f.render_widget(cmd, chunks[3]);
+    if let Windows::Command= ctx.focus{
+        f.set_cursor_position((chunks[3].x + 3 + *ctx.curs_x as u16, chunks[3].y+1));
+    }
     // Render the error popup if `render_error` is true
     let popup_width = area.width / 2;
     let popup_height = 5;

@@ -1,6 +1,9 @@
+use std::usize;
+
+use copypasta::{ClipboardContext, ClipboardProvider};
 use ratatui::layout::Rect;
 use serde::{Deserialize, Serialize};
-
+use crate::theme::*;
 pub enum CursorDirection {
     Left,
     Right,
@@ -9,6 +12,8 @@ pub enum CursorDirection {
 }
 
 pub struct App {
+    pub clipboard: ClipboardContext,
+    pub theme: Theme,
     pub documents: Vec<Document>,
     pub window_height: u16,
     pub input_buffer: String,
@@ -23,6 +28,8 @@ pub struct App {
     pub popup_message: String,
 
     pub focus: Windows,
+    pub curs_x: usize,
+
 }
 pub enum Windows {
     Editor,
@@ -35,6 +42,7 @@ pub struct LayoutSnapshot {
     pub command_area: Rect,
 }
 pub struct RenderContext<'a> {
+    pub theme: &'a Theme,
     pub documents: &'a Vec<Document>,
     pub input_buffer: &'a String,
     pub active: &'a usize,
@@ -45,6 +53,7 @@ pub struct RenderContext<'a> {
     pub show_popup: &'a bool,
     pub popup_message: &'a String,
     pub focus: &'a Windows,
+    pub curs_x: &'a usize,
 }
 
 pub struct Document {
@@ -58,12 +67,16 @@ pub struct EditorState {
     pub curs_x: usize,
     pub curs_y: usize,
     pub is_dirty: bool,
+    
     pub window_height: usize,
     pub scroll_offset: usize,
     pub find_active: bool,
+
     pub current_match: usize,
     pub highlights: Vec<(usize, usize, usize)>,
+    
     pub undo_stack: UndoStack,
+    pub selection: Option<((usize, usize), (usize, usize))>
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -107,6 +120,7 @@ pub enum Operations {
     List,
     Close,
     Exit,
+    None,
 }
 
 #[derive(Serialize, Deserialize)]

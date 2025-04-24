@@ -16,7 +16,18 @@ impl EditorState {
                 current_match: 0,
                 highlights: Vec::new(),
                 undo_stack: UndoStack::new(None),
+                selection: None,
             },
+        }
+    }
+    pub fn update_selection_end(&mut self, y: usize, x: usize) {
+        if let Some((start, _)) = self.selection {
+            self.selection = Some((start, (y, x)));
+        }
+    }
+    pub fn start_selection(&mut self, y: usize, x:usize) {
+        if self.selection == None {
+            self.selection = Some(((y,x),(y,x)));
         }
     }
 }

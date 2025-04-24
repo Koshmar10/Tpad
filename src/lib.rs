@@ -4,6 +4,7 @@ pub mod doc;
 pub mod session;
 pub mod tpad_error;
 pub mod ui;
+pub mod theme;
 pub use data_models::*;
 
 /*
