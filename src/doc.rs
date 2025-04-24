@@ -121,95 +121,102 @@ impl Document {
         self.state.highlights.clear();
         self.state.find_active = false;
     }
-    pub fn undo(&mut self) {
-        // Scope the mutable borrow of the undo stack and extract the line, col, and add_offset flag
+    pub fn undo(&mut self) -> Result<(), Box<dyn Error>> {
         let adjust = {
             let op_stack = &mut self.state.undo_stack;
             if op_stack.stack.is_empty() {
-                return;
+                return Err("No operations to undo".into());
             }
+    
             let index = op_stack.cursor.saturating_sub(1);
+    
             match &mut op_stack.stack[index] {
-                EditOp::InsertChar {
-                    line,
-                    col,
-                    ch: _,
-                    applied,
-                } => {
-                    if !*applied {
-                        self.content[*line].remove(*col);
-                        *applied = true;
-                        // For undoing an insertion, place the cursor at the removed char position
-                        Some((*line, *col, false))
-                    } else {
-                        None
+                EditOp::InsertChar { line, col, applied, .. } => {
+                    if *applied {
+                        return Ok(()); // already undone
                     }
+    
+                    let line_str = self.content.get_mut(*line).ok_or("Invalid line index")?;
+                    if *col >= line_str.len() {
+                        return Err("Invalid character index".into());
+                    }
+    
+                    line_str.remove(*col);
+                    *applied = true;
+    
+                    Some((*line, *col, false))
                 }
-                EditOp::DeleteChar {
-                    line,
-                    col,
-                    ch,
-                    applied,
-                } => {
-                    if !*applied {
-                        self.content[*line].insert(*col, *ch);
-                        *applied = true;
-                        // For undoing a deletion, move the cursor after the inserted char
-                        Some((*line, *col, true))
-                    } else {
-                        None
+    
+                EditOp::DeleteChar { line, col, ch, applied } => {
+                    if *applied {
+                        return Ok(()); // already undone
                     }
+    
+                    let line_str = self.content.get_mut(*line).ok_or("Invalid line index")?;
+                    if *col > line_str.len() {
+                        return Err("Invalid insert position".into());
+                    }
+    
+                    line_str.insert(*col, *ch);
+                    *applied = true;
+    
+                    Some((*line, *col, true))
                 }
-                EditOp::SplitLine {
-                    first_line,
-                    second_line,
-                    applied,
-                } => {
-                    if !*applied {
-                        let mut add_offset = false;
-                        if self.content[*second_line].len() != 0 {
-                            let to_move = self.content[*second_line].clone();
-                            self.content[*first_line].push_str(&to_move);
-                            add_offset = true;
-                        } else {
-                            if self.content[*first_line].len() != 0 {
-                                add_offset = true;
-                            }
-                        }
-                        self.content.remove(*second_line);
-                        let aux = *first_line;
-                        *applied = true;
-                        Some((aux, self.content[aux].len().saturating_sub(1), add_offset))
-                    } else {
-                        None
+    
+                EditOp::SplitLine { first_line, second_line, split_index, applied } => {
+                    if *applied {
+                        return Ok(());
                     }
+    
+                    if *first_line >= self.content.len() || *second_line >= self.content.len() {
+                        return Err("Invalid line indices in SplitLine".into());
+                    }
+    
+                    // Merge the split lines back together using split_index.
+                    // We assume that the original split was performed at split_index.
+                    let first_part = self.content[*first_line].clone();
+                    let second_part = self.content[*second_line].clone();
+                    self.content[*first_line] = format!("{}{}", first_part, second_part);
+                    self.content.remove(*second_line);
+    
+                    *applied = true;
+                    Some((*first_line, *split_index, true))
                 }
-                EditOp::MergeLines {
-                    merged_line,
-                    merge_point,
-                    applied,
-                } => {
-                    if !*applied {
-                        // Undo a merge by splitting the merged line at merge_point.
-                        let m_line = *merged_line;
-                        let split_point = *merge_point;
-                        let new_line = self.content[m_line].split_off(split_point);
-                        self.content.insert(m_line + 1, new_line);
-                        *applied = true;
-                        Some((m_line, split_point, false))
-                    } else {
-                        None
+    
+                EditOp::MergeLines { merged_line, merge_point, applied } => {
+                    if *applied {
+                        return Ok(());
                     }
+    
+                    let m_line = *merged_line;
+                    if m_line >= self.content.len() {
+                        return Err("Invalid line index in MergeLines".into());
+                    }
+    
+                    let split_point = *merge_point;
+                    let original = &mut self.content[m_line];
+                    if split_point > original.len() {
+                        return Err("Merge point beyond line length".into());
+                    }
+    
+                    let new_line = original.split_off(split_point);
+                    self.content.insert(m_line + 1, new_line);
+                    *applied = true;
+    
+                    Some((m_line, split_point, false))
                 }
             }
         };
-        if let Some((line, col, add_offset)) = adjust {
-            self.adjust_cursor(line, col, add_offset);
+    
+        if let Some((line, col, offset)) = adjust {
+            self.adjust_cursor(line, col, offset);
         }
+    
         self.state.undo_stack.cursor = self.state.undo_stack.cursor.saturating_sub(1);
         self.update_content();
+        Ok(())
     }
-
+    
     pub fn redo(&mut self) {
         // Scope the mutable borrow of the undo stack and extract the line, col, and add_offset flag
         let adjust = {
@@ -262,6 +269,21 @@ impl Document {
                         }
                         *applied = false;
                         Some((m_line, self.content[m_line].len().saturating_sub(1), false))
+                    } else {
+                        None
+                    }
+                }
+                EditOp::SplitLine { first_line, second_line, split_index, applied } => {
+                    if *applied {
+                        let line_index = *first_line;
+                        if line_index >= self.content.len() {
+                            return;
+                        }
+                        let actual_split_index = *split_index;
+                        let second_part = self.content[line_index].split_off(actual_split_index);
+                        self.content.insert(line_index + 1, second_part);
+                        *applied = false;
+                        Some((line_index, actual_split_index, false))
                     } else {
                         None
                     }

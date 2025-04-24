@@ -82,6 +82,7 @@ pub enum EditOp {
     },
     SplitLine {
         first_line: usize,
+        split_index: usize,
         second_line: usize,
         applied: bool,
     }, // ← Enter key

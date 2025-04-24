@@ -170,6 +170,7 @@ impl App {
                             active_doc.content.push(String::new());
                             active_doc.state.undo_stack.push(EditOp::SplitLine {
                                 first_line: offset + active_doc.state.curs_y,
+                                split_index: active_doc.state.curs_x,
                                 second_line: offset + active_doc.state.curs_y + 1,
                                 applied: false,
                             });
@@ -209,6 +210,7 @@ impl App {
                             }
                             active_doc.state.undo_stack.push(EditOp::SplitLine {
                                 first_line: offset + active_doc.state.curs_y.saturating_sub(1),
+                                split_index: active_doc.state.curs_x,
                                 second_line: offset + active_doc.state.curs_y,
                                 applied: false,
                             });
@@ -331,7 +333,7 @@ impl App {
                     KeyCode::Char('y') => {
                         self.documents[self.active].redo();
                     }
-                    _ => {}
+                    _ =>{}
                 }
             }
             (KeyCode::Char('n') | KeyCode::Char('m'), KeyModifiers::ALT) => {
