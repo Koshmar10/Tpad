@@ -3,7 +3,6 @@ use ratatui::style::Color;
 use ratatui::{layout::{Constraint, Direction, Layout, Rect}, symbols::line::BOTTOM_LEFT, text::Text, widgets::{Block, Borders, Paragraph}, DefaultTerminal, Frame};
 use ratatui::style::Style;
 
-use crate::data_models::App;
 
 use crate::data_models::*;
 

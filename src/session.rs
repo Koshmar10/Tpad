@@ -2,14 +2,8 @@ use dirs::config_dir;
 use serde_json::json;
 use std::{error::Error, fs, path::PathBuf};
 use serde::{Serialize, Deserialize};
-use crate::{App, UndoStack};
 use crate::data_models::*;
-#[derive(Serialize, Deserialize)]
-pub struct SavedSession {
-    pub saved_files: Vec<String>,
-    pub undo_bufs: Vec<UndoStack>,
-    pub active: usize,
-}
+
 fn get_session_file_path() -> PathBuf {
     let base_dir = config_dir().unwrap_or_else(|| PathBuf::from("."));
     base_dir.join("tpad").join("session.json")

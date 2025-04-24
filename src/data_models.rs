@@ -1,5 +1,6 @@
-use ratatui::{prelude::CrosstermBackend, Terminal};
+use ratatui::{layout::Rect, prelude::CrosstermBackend, Terminal};
 use serde::{Deserialize, Serialize};
+
 
 pub enum CursorDirection {
     Left,
@@ -8,8 +9,10 @@ pub enum CursorDirection {
     Down,
 }
 
+
 pub struct App {
     pub documents: Vec<Document>,
+    pub window_height: u16,
     pub input_buffer: String,
     
     pub active: usize,
@@ -22,6 +25,17 @@ pub struct App {
     pub popup_message: String,
 
     pub focus: Windows,
+}
+pub enum Windows {
+    Editor,
+    Command,
+}
+pub struct LayoutSnapshot {
+    pub status_area: Rect,
+    pub tab_area: Rect,
+    pub editor_area: Rect,
+    pub command_area: Rect,
+    
 }
 pub struct RenderContext<'a> {
     pub documents: &'a Vec<Document>,
@@ -36,11 +50,6 @@ pub struct RenderContext<'a> {
     pub focus: &'a Windows,
 }
 
-pub enum Windows {
-    Editor,
-    Command,
-}
-
 pub struct Document {
     pub file_path: String,
     pub permissions: String,
@@ -48,7 +57,6 @@ pub struct Document {
     pub content: Vec<String>, // Changed from String to Vec<String>
     pub state: EditorState,
 }
-
 pub struct EditorState {
     pub curs_x: usize,
     pub curs_y: usize,
