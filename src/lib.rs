@@ -115,7 +115,7 @@ impl App {
 
                 // Render the error popup if `render_error` is true
                 let popup_width = area.width / 2;
-                    let popup_height = area.height / 2;
+                    let popup_height = 5;
                     let popup_x = area.x + (area.width - popup_width) / 2;
                     let popup_y = area.y + (area.height - popup_height) / 2;
 
@@ -125,7 +125,14 @@ impl App {
                     tpad_error::render_error_popup(f, popup_area, &self.error_msg);
                 }
                 if self.show_popup {
-                    let popup = Paragraph::new(Text::from(self.popup_message.clone()))
+                    let popup = Paragraph::new(Text::from(
+                        vec![
+                            Line::from(" "),
+                            Line::from(self.popup_message.clone()),
+                            Line::from(" "),
+                            ])
+                    )
+                        .centered() 
                         .block(Block::default().borders(Borders::ALL).title("Popup"));
                     f.render_widget(popup, popup_area);
                 }
@@ -347,6 +354,30 @@ impl App {
                     _ => {}
                 }
             }
+            (KeyCode::Char('n') | KeyCode::Char('m'), KeyModifiers::ALT  ) =>{
+                let active_doc = &mut self.documents[self.active];
+                if active_doc.state.find_active {
+                        let h = active_doc.state.highlights[active_doc.state.current_match];
+                        if key_event.code == KeyCode::Char('m') && key_event.modifiers == KeyModifiers::ALT {
+                            active_doc.adjust_cursor(
+                                h.0, h.2, false);
+                                active_doc.state.current_match = active_doc.state.current_match.checked_sub(1)
+                                    .unwrap_or_else(|| { active_doc.unhighlight(); 0 });
+
+                        }
+                        else if key_event.code == KeyCode::Char('n') && key_event.modifiers == KeyModifiers::ALT{
+                            if active_doc.state.current_match < active_doc.state.highlights.len()-1{
+
+                                active_doc.adjust_cursor(
+                                    h.0, h.2, false);
+                                    active_doc.state.current_match+=1;
+                                }
+                            else{
+                                active_doc.unhighlight();
+                            }
+                        }
+                }
+            }
             // Handle regular character input
             (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
                 match self.focus {
@@ -386,6 +417,7 @@ impl App {
                         // Update the document content and move the cursor
                         active_doc.update_content();
                         self.move_curs(CursorDirection::Right);
+                        
                     }
                 }
             }
@@ -517,6 +549,8 @@ impl App {
                     let doc =&mut self.documents[self.active];
                     let matches = doc.find(&word);
                     doc.highlight(matches);
+                    self.focus=Windows::Editor;
+                    
 
                  
                 }
@@ -549,7 +583,7 @@ impl App {
         if doc.state.is_dirty {
             self.show_popup =  true;
             self.exit_requested = true;
-            self.popup_message = String::from("Save befor exiting?(y/n");
+            self.popup_message = String::from("Save befor exiting?(y/n)");
         }
         else {
             self.exit().unwrap();
@@ -568,7 +602,7 @@ impl EditorState {
     pub fn new(past_state: Option<EditorState>) -> EditorState {
         match past_state {
             Some(state) => state,
-            None => EditorState { curs_x: 0, curs_y: 0, is_dirty: false, scroll_offset: 0, window_height: 0, highlights: Vec::new(), undo_stack:UndoStack::new(None)  }
+            None => EditorState { curs_x: 0, curs_y: 0, is_dirty: false, scroll_offset: 0, window_height: 0, find_active : false, current_match : 0, highlights: Vec::new(), undo_stack:UndoStack::new(None)  }
         }
     }
 }
@@ -665,9 +699,13 @@ impl Document {
     }
     pub fn highlight(&mut self, v: Vec<(usize,usize,usize)>){
         self.state.highlights = v;
+        self.state.find_active=true;
+        
+
     }
     pub fn unhighlight(&mut self){
         self.state.highlights.clear();
+        self.state.find_active=false;
     }
     pub fn undo(&mut self){
         // Scope the mutable borrow of the undo stack and extract the line, col, and add_offset flag
@@ -795,15 +833,17 @@ impl Document {
 
     // Helper function to adjust the cursor position based on an absolute line and column.
     fn adjust_cursor(&mut self, op_line: usize, op_col: usize, add_offset: bool) {
-        // Adjust scroll offset if necessary to ensure the op_line is visible.
+        // If the operation line is above the current viewport, scroll up.
+        let window_height = self.state.window_height -2;
         if op_line < self.state.scroll_offset {
             self.state.scroll_offset = op_line;
-        } else if op_line >= self.state.scroll_offset + self.state.window_height {
-            self.state.scroll_offset = op_line.saturating_sub(self.state.window_height - 1);
+        // If the operation line is below the visible area, scroll down.
+        } else if op_line > self.state.scroll_offset + window_height {
+            self.state.scroll_offset = op_line - window_height + 1;
         }
-        // Set the cursor relative to the current viewport.
+        // Calculate the cursor's position within the visible window and adjust upward by one line.
         self.state.curs_y = op_line.saturating_sub(self.state.scroll_offset);
-        // When redoing an insertion (or undoing a deletion), we need the cursor to end up after the affected character.
+        // Adjust the cursor column, adding one if needed.
         self.state.curs_x = op_col + if add_offset { 1 } else { 0 };
     }
 }

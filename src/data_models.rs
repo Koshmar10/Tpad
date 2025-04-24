@@ -55,6 +55,8 @@ pub struct EditorState {
     pub is_dirty: bool,
     pub window_height: usize,
     pub scroll_offset: usize,
+    pub find_active: bool,
+    pub current_match: usize,
     pub highlights: Vec<(usize, usize, usize)>,
     pub undo_stack: UndoStack,
 }
