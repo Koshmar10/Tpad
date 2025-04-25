@@ -1,12 +1,8 @@
 use std::fs;
 
-use color_eyre::owo_colors::OwoColorize;
+use color_eyre::owo_colors::{colors::xterm::MatrixPink, OwoColorize};
 use ratatui::{
-    Frame,
-    layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
-    text::{Line, Span, Text},
-    widgets::{Block, Borders, Paragraph},
+    layout::{Constraint, Direction, Layout, Rect}, style::{Color, Style, Stylize}, text::{Line, Span, Text}, widgets::{Block, Borders, Paragraph}, Frame
 };
 
 use crate::{data_models::*, theme::hex_to_color};
@@ -17,7 +13,7 @@ pub fn render_doc_view(frame: &mut Frame<'_>, area: Rect, ctx: &RenderContext) {
     let fg_color = hex_to_color(ctx.theme.editor.foreground.clone());
     let bg_color = hex_to_color(ctx.theme.editor.background.clone());
     //fs::write("log.txt", format!("{:?} {:?} {:?}", highl, fg_color, bg_color)).unwrap();
-    let doc_view = selected_doc
+    let mut doc_view = selected_doc
         .content
         .iter()
         .enumerate()
@@ -34,29 +30,76 @@ pub fn render_doc_view(frame: &mut Frame<'_>, area: Rect, ctx: &RenderContext) {
                 highlights.sort_by_key(|&(_, start, _)| start);
 
                 let mut spans = Vec::new();
-                let mut last_end = 0;
+            
 
-                for &(_, start, end) in highlights.iter() {
-                    // Add non-highlighted part before the match.
-                    if start > last_end {
-                        spans.push(Span::styled(&line[last_end..start], Style::default().fg(fg_color)));
-                    }
-                    // Add highlighted segment.
-                    spans.push(Span::styled(
-                        &line[start..end],
-                        Style::default().fg(highl),
-                    ));
-                    last_end = end;
-                }
-                // Add remaining part of the line.
-                if last_end < line.len() {
-                    spans.push(Span::styled(&line[last_end..], Style::default().fg(fg_color)));
+                for (i, ch) in line.char_indices() {
+                    let style = if highlights.iter().any(|&(_, start, end)| i >= start && i < end) {
+                        Style::default().fg(highl)
+                    } else {
+                        Style::default().fg(fg_color)
+                    };
+                    spans.push(Span::styled(ch.to_string(), style));
                 }
                 spans
             })
         })
         .collect::<Vec<Line>>();
+        
+        let offst = selected_doc.state.scroll_offset;
+        let selection= selected_doc.state.selection;
+        match selection {
+            
+            Some(val) => {
+                let (start_y, start_x, stop_y, stop_x) = {
+                    let (y1, x1) = val.0;
+                    let (y2, x2) = val.1;
+                    if y1 <= y2 {
+                        
+                        (y1, x1, y2, x2)
+                    } else {
+                        (y2, x2, y1, x1)
+                    }
+                };
 
+                for (y, line )in doc_view.iter_mut().enumerate() {
+                    for (x,span )in line.iter_mut().enumerate() {
+
+                        if y == start_y && y == stop_y {
+                            // Single line selection.
+                            
+                            if x >= start_x.min(stop_x) && x < stop_x.max(start_x)  {
+                                *span = Span::styled(span.content.clone(), span.style.bg(highl));
+                            }
+                        } else if y == start_y {
+                            // First line of a multi-line selection.
+                            if x >= start_x {
+                                *span = Span::styled(span.content.clone(), span.style.bg(highl));
+                            }
+                        } else if y > start_y && y < stop_y {
+                            // Entire middle line is selected.
+                            *span = Span::styled(span.content.clone(), span.style.bg(highl));
+                        } else if y == stop_y {
+                            // Last line of a multi-line selection.
+                            if x < stop_x {
+                                *span = Span::styled(span.content.clone(), span.style.bg(highl));
+                            }
+                        }
+                        
+                    
+                            
+                           
+                            
+                        
+                        
+                       
+                            
+                        
+                    }
+                }
+            }
+            None => {}
+        }
+        
     let doc_view_slice = &doc_view[selected_doc.state.scroll_offset..];
     let doc_view_paragraph = Paragraph::new(Text::from_iter(doc_view_slice.iter().cloned())).style(bg_color)
         .block(Block::default().borders(Borders::TOP | Borders::LEFT | Borders::RIGHT));

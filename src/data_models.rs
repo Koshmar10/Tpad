@@ -129,3 +129,8 @@ pub struct SavedSession {
     pub undo_bufs: Vec<UndoStack>,
     pub active: usize,
 }
+
+pub enum Popoup {
+    ErrorPopup,
+    InteractivePopup,
+}

@@ -1,6 +1,9 @@
-use copypasta::ClipboardContext;
+use color_eyre::owo_colors::OwoColorize;
+use copypasta::{ClipboardContext, ClipboardProvider};
+use ratatui::symbols::line;
 use ratatui::{DefaultTerminal, Frame};
 use std::error::Error;
+use std::fs;
 
 use color_eyre::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -172,61 +175,25 @@ impl App {
                     }
                     Windows::Editor => {
                         let active_doc = &mut self.documents[self.active];
+                       
                         let offset = active_doc.state.scroll_offset;
-                        active_doc.unhighlight();
-                        if offset + active_doc.state.curs_y >= active_doc.content.len() {
-                            // Add a new empty line if the cursor is beyond the current content
+                        let split_index = active_doc.state.curs_x;
+                        //if a split is initialized and the cursor is on the last line of the doc
+                        //a new line is created so that he split does not create panic
+                        if offset + active_doc.state.curs_y >= active_doc.content.len(){
                             active_doc.content.push(String::new());
-                            active_doc.state.undo_stack.push(EditOp::SplitLine {
-                                first_line: offset + active_doc.state.curs_y,
-                                split_index: active_doc.state.curs_x,
-                                second_line: offset + active_doc.state.curs_y + 1,
-                                applied: false,
-                            });
-                            active_doc.state.curs_y = active_doc.content.len() - offset - 1;
-                        } else {
-                            let current_line =
-                                &mut active_doc.content[offset + active_doc.state.curs_y];
-                            if active_doc.state.curs_x >= current_line.len() {
-                                // If pressing enter at the end of the line, insert an empty line after
-                                active_doc
-                                    .content
-                                    .insert(offset + active_doc.state.curs_y + 1, String::new());
-                                if active_doc.state.curs_y < self.window_height as usize - 2
-                                    && offset + active_doc.state.curs_y
-                                        < active_doc.content.len() - 1
-                                {
-                                    active_doc.state.curs_y += 1;
-                                } else if active_doc.state.curs_y == self.window_height as usize - 2
-                                {
-                                    active_doc.state.scroll_offset += 1;
-                                }
-                            } else {
-                                // Split the current line at the cursor position
-                                let new_line = current_line.split_off(active_doc.state.curs_x);
-                                active_doc
-                                    .content
-                                    .insert(offset + active_doc.state.curs_y + 1, new_line);
-                                if active_doc.state.curs_y < self.window_height as usize - 2
-                                    && offset + active_doc.state.curs_y
-                                        < active_doc.content.len() - 1
-                                {
-                                    active_doc.state.curs_y += 1;
-                                } else if active_doc.state.curs_y == self.window_height as usize - 2
-                                {
-                                    active_doc.state.scroll_offset += 1;
-                                }
-                            }
-                            active_doc.state.undo_stack.push(EditOp::SplitLine {
-                                first_line: offset + active_doc.state.curs_y.saturating_sub(1),
-                                split_index: active_doc.state.curs_x,
-                                second_line: offset + active_doc.state.curs_y,
-                                applied: false,
-                            });
                         }
-                        active_doc.state.curs_x = 0;
-
-                        self.documents[self.active].update_content();
+                        if active_doc.state.curs_y == active_doc.state.window_height {
+                            active_doc.state.scroll_offset+=1;
+                        }
+                        active_doc.state.undo_stack.push(
+                            EditOp::SplitLine { first_line: offset+active_doc.state.curs_y, split_index, second_line: offset+active_doc.state.curs_y+1, applied: false }
+                        );
+                       
+                        active_doc.split_lines(
+                            offset+active_doc.state.curs_y,
+                            split_index);
+                        
                     }
                 }
             }
@@ -278,10 +245,22 @@ impl App {
                         
                         let active_doc = &mut self.documents[self.active];
                         match (key_event.code, key_event.modifiers)  {
-                            (KeyCode::Right, KeyModifiers::NONE) => move_curs(active_doc, CursorDirection::Right),
-                            (KeyCode::Left, KeyModifiers::NONE) => move_curs(active_doc, CursorDirection::Left),
-                            (KeyCode::Down, KeyModifiers::NONE) => move_curs(active_doc, CursorDirection::Down),
-                            (KeyCode::Up, KeyModifiers::NONE) => move_curs(active_doc, CursorDirection::Up),
+                            (KeyCode::Right, KeyModifiers::NONE) => {
+                                active_doc.state.selection = None;
+                                move_curs(active_doc, CursorDirection::Right);
+                            },
+                            (KeyCode::Left, KeyModifiers::NONE) => {
+                                active_doc.state.selection = None;
+                                move_curs(active_doc, CursorDirection::Left);
+                            },
+                            (KeyCode::Down, KeyModifiers::NONE) => {
+                                active_doc.state.selection = None;
+                                move_curs(active_doc, CursorDirection::Down);
+                            },
+                            (KeyCode::Up, KeyModifiers::NONE) => {
+                                active_doc.state.selection = None;
+                                move_curs(active_doc, CursorDirection::Up);
+                            },
                             (KeyCode::Right, KeyModifiers::SHIFT) => 
                             {
                                 
@@ -323,72 +302,122 @@ impl App {
                     }
                     Windows::Editor => {
                         let active_doc = &mut self.documents[self.active];
-                        active_doc.unhighlight();
                         let offset = active_doc.state.scroll_offset;
-                        let idx = offset + active_doc.state.curs_y;
                         // Check if the cursor is at the beginning of the line.
                         if active_doc.state.curs_x == 0 {
-                            if active_doc.state.curs_y > 0 {
-                                // Not the first visible line: merge with the previous visible line.
-                                let merge_point = active_doc.content[idx - 1].len();
-                                let to_move_up = active_doc.content[idx].clone();
-                                active_doc.content.remove(idx);
-                                active_doc.state.curs_y -= 1;
-                                let new_idx =
-                                    active_doc.state.scroll_offset + active_doc.state.curs_y;
-                                active_doc.state.undo_stack.push(EditOp::MergeLines {
-                                    merged_line: new_idx,
-                                    merge_point,
-                                    applied: false,
-                                });
-                                active_doc.content[new_idx].push_str(&to_move_up);
-                                active_doc.state.curs_x = active_doc.content[new_idx].len();
-                            } else if active_doc.state.scroll_offset > 0 {
-                                // At the first visible line but with a scroll offset:
-                                // scroll up and merge with the hidden previous line.
-                                let new_idx = active_doc.state.scroll_offset - 1;
-                                let merge_point = active_doc.content[new_idx].len();
-                                let to_move_up = active_doc.content.remove(idx);
-                                active_doc.state.scroll_offset -= 1;
-                                active_doc.state.undo_stack.push(EditOp::MergeLines {
-                                    merged_line: new_idx,
-                                    merge_point,
-                                    applied: false,
-                                });
-                                active_doc.content[new_idx].push_str(&to_move_up);
-                                // curs_y remains 0 since the new first visible line is now the previous line.
-                                active_doc.state.curs_x = active_doc.content[new_idx].len();
+                            if active_doc.state.curs_y ==0 && active_doc.state.scroll_offset == 0{
+                                return;
                             }
+                            if active_doc.state.curs_y == 0 && active_doc.state.scroll_offset > 0{
+                                //its on the first visible line && there are lines above
+                                //scrolling is needed 
+                                active_doc.state.scroll_offset-=1;
+                            }
+                            active_doc.state.undo_stack.push(EditOp::MergeLines { 
+                                merged_line: offset + active_doc.state.curs_y.saturating_sub(1), 
+                                merge_point: active_doc.content[offset + active_doc.state.curs_y.saturating_sub(1)].len(), 
+                                applied: false });
+                               
+                            active_doc.merge_lines(
+                                offset + active_doc.state.curs_y .saturating_sub(1), 
+                                offset + active_doc.state.curs_y  );
+                            
                         } else {
                             // Delete the character on the left of the cursor.
-                            if let Some(line) = active_doc.content.get_mut(idx) {
-                                let delete_index = active_doc.state.curs_x;
-                                if delete_index > 0 && delete_index <= line.len() {
-                                    let removed_char = line.remove(delete_index - 1);
-                                    active_doc.state.undo_stack.push(EditOp::DeleteChar {
-                                        line: idx,
-                                        col: delete_index - 1,
-                                        ch: removed_char,
-                                        applied: false,
-                                    });
-                                    active_doc.update_content();
-                                    move_curs(active_doc, CursorDirection::Left);
-                                }
-                            }
+                            
+                            
+                           let ch = active_doc.content[offset+active_doc.state.curs_y].chars().nth(active_doc.state.curs_x - 1).unwrap();
+                            active_doc.state.undo_stack.push(EditOp::DeleteChar {
+                                line: offset + active_doc.state.curs_y,
+                                col: active_doc.state.curs_x-1,
+                                ch: ch,
+                                applied: false,
+                            });
+            
+                            active_doc.delete_char(
+                                offset + active_doc.state.curs_y, 
+                                active_doc.state.curs_x);
+                            
                         }
                     }
+                }
+            }
+            (KeyCode::Char('c') | KeyCode::Char('v'), KeyModifiers::CONTROL) =>{
+                let active_doc = &mut self.documents[self.active];
+                match key_event.code {
+                    KeyCode::Char('c') =>{
+                        match active_doc.state.selection {
+                            Some(val) =>{
+                                let(line1, col1, line2, col2) = {
+                                    let (y1, x1) = val.0;
+                                    let (y2, x2) = val.1;
+
+                                    if y1 < y2 {
+                                        (y1, x1, y2, x2)
+                                    }
+                                    else{
+                                        (y2, x2, y1, x1)
+                                    }
+
+                                };
+                                
+                                let mut copy_content: Vec<String> = Vec::new();
+                                let mut copy_buffer = String::new();
+                                if line1 == line2 {
+                                    copy_buffer = active_doc.content[line1].as_str()[col2.min(col1)..col1.max(col2)].to_string();
+                                }else{
+                                    copy_content.push(active_doc.content[line1].as_str()[col1..].to_string());
+                                    if line2 - line1 != 0 {
+                                        for line in &active_doc.content[line1+1..line2]{
+                                            copy_content.push(line.clone());
+                                        }
+                                    }
+                                    copy_content.push(active_doc.content[line2].as_str()[..col2].to_string());
+                                    copy_buffer = copy_content.join("\n");
+                                        
+                                }
+                                self.clipboard = ClipboardContext::new().unwrap();
+                                self.clipboard.set_contents(copy_buffer.to_owned()).unwrap();
+                                fs::write("log.txt", format!("{},{} {},{} \n {}", line1,col1,line2,col2, self.clipboard.get_contents().unwrap())).ok();
+                            },
+                            None => {},
+                        }
+                    }
+                    KeyCode::Char('v') =>{
+                        let active_doc = &mut self.documents[self.active];
+                        let offset =  active_doc.state.scroll_offset;
+                        let insert_line = active_doc.state.curs_y+offset;
+                        match active_doc.content.get_mut(insert_line){
+                            Some(line) =>{
+                                line.insert_str(active_doc.state.curs_x, &self.clipboard.get_contents().unwrap_or(String::new()));
+                                active_doc.content ={
+                                    let mut updated:Vec<String>= Vec::new();
+                                    for line in &active_doc.content{
+                                        for new_line in  line.split("\n"){
+                                            updated.push(new_line.to_string());
+                                        }
+                                    }
+                                    updated
+
+                                } 
+                            },
+                            None => return,
+                        };
+                    }
+                    _=>{}
                 }
             }
             (KeyCode::Char('s'), KeyModifiers::CONTROL) => self.documents[self.active]
                 .save_file()
                 .unwrap_or_else(|e| self.throw_error(e)),
             (KeyCode::Char('z') | KeyCode::Char('y'), KeyModifiers::CONTROL) => {
+                let active_doc = &mut self.documents[self.active];
                 match key_event.code {
                     KeyCode::Char('z') => {
-                        self.documents[self.active].undo();
+                        active_doc.undo();
                     }
                     KeyCode::Char('y') => {
-                        self.documents[self.active].redo();
+                        active_doc.redo();
                     }
                     _ =>{}
                 }
@@ -436,39 +465,24 @@ impl App {
                         _ =>{}
                     },
                     Windows::Editor => {
+                        
                         let active_doc = &mut self.documents[self.active];
-                        active_doc.unhighlight();
                         let offset = active_doc.state.scroll_offset;
-                        // Ensure the content vector has enough lines
-                        while active_doc.state.curs_y >= active_doc.content.len() {
-                            active_doc.content.push(String::new());
-                        }
+                        active_doc.state.undo_stack.push(EditOp::InsertChar { 
+                            line: offset + active_doc.state.curs_y,
+                            col: active_doc.state.curs_x,
+                            ch: if key_event.modifiers.contains(KeyModifiers::SHIFT) {c.to_ascii_uppercase()} else {c},
+                            applied: false});
 
-                        // Insert the character at the cursor position
-                        active_doc.content[offset + active_doc.state.curs_y].insert(
+                        active_doc.insert_char(
+                            offset + active_doc.state.curs_y,
                             active_doc.state.curs_x,
-                            if key_event.modifiers.contains(KeyModifiers::SHIFT) {
-                                active_doc.state.undo_stack.push(EditOp::InsertChar {
-                                    line: offset + active_doc.state.curs_y,
-                                    col: active_doc.state.curs_x,
-                                    ch: c.to_ascii_uppercase(),
-                                    applied: false,
-                                });
-                                c.to_ascii_uppercase()
-                            } else {
-                                active_doc.state.undo_stack.push(EditOp::InsertChar {
-                                    line: offset + active_doc.state.curs_y,
-                                    col: active_doc.state.curs_x,
-                                    ch: c,
-                                    applied: false,
-                                });
-                                c
-                            },
+                            if key_event.modifiers.contains(KeyModifiers::SHIFT) {c.to_ascii_uppercase()} else {c}
                         );
-
-                        // Update the document content and move the cursor
-                        active_doc.update_content();
-                        move_curs(active_doc, CursorDirection::Right);
+                        
+                        
+                        // Ensure the content vector has enough lines
+                        
                     }
                 }
             }
@@ -533,6 +547,10 @@ impl App {
             Ok(Some(Operations::WordCount(String::from(args[0]))))
         } else if command.trim() == "list" {
             Ok(Some(Operations::List))
+        }else if command.trim() == "clundo" {
+            self.documents[self.active].state.undo_stack.stack.clear();
+            self.documents[self.active].state.undo_stack.cursor = 0;
+            Ok(Some(Operations::None))
         } else if command.trim() == "q" {
             Ok(Some(Operations::Exit))
         }else if command.trim() == "wq" {
