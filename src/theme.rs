@@ -1,23 +1,41 @@
-use std::{fs, path::PathBuf};
+use std::{ffi::OsString, fs::{self, DirEntry}, path::PathBuf};
 
 use dirs::config_dir;
 use serde::{Deserialize, Deserializer, Serialize};
 use ratatui::style::Color;
 use serde_json::from_str;
-use crate::tpad_error;
+use crate::{ Popup};
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Theme {
     pub status: StatusSytle,
     pub tabs: TabsStyle,
     pub editor: EditorStyle,
-    pub command: CommandStyle
+    pub command: CommandStyle,
+    pub popup: PopupStyle,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct StatusSytle {
     pub foreground: String,
 }
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PopupStyle {
+    pub bg: String,
+    pub fg: String,
+    pub error_fg: String,
+    pub error_bg: String,
+}
 
+impl Default for PopupStyle {
+    fn default() -> Self {
+        PopupStyle {
+            bg: String::from("#ffffff"),
+            fg: String::from("#000000"),
+            error_fg: String::from("#ff0000"),
+            error_bg: String::from("#000000"),
+        }
+    }
+}
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TabsStyle {
 
@@ -51,6 +69,7 @@ impl Default for Theme {
             command:CommandStyle::default(),
             tabs : TabsStyle::default(),
             status : StatusSytle::default(),
+            popup : PopupStyle::default(),
         }
     }
 }
@@ -89,7 +108,7 @@ impl Default for StatusSytle {
         StatusSytle { foreground: String::from("#ffffff") }
     }
 }
-fn get_theme_file_path() ->PathBuf {
+pub fn get_theme_file_path() ->PathBuf {
     let base_dir = config_dir().unwrap_or_else(|| PathBuf::from("."));
     base_dir.join("tpad").join("theme.toml")
 }
@@ -106,28 +125,26 @@ pub fn hex_to_color(hex: String) -> Color {
 impl Theme {
     pub fn load() -> Theme {
         let path = get_theme_file_path();
-        let theme_conf: Theme = match fs::read_to_string(&path){
-            Ok(str) => {
-                let tm: Theme= toml::from_str(&str).unwrap();
-                //fs::write("log.txt", format!("{:?}", tm)).unwrap();
-                Theme {
-                    editor: tm.editor,
-                    status: tm.status,
-                    command: tm.command,
-                    tabs:tm.tabs,
+        match fs::read_to_string(&path) {
+            Ok(content) if !content.is_empty() => match toml::from_str(&content) {
+                Ok(theme) => theme,
+                Err(_parse_err) => {
+                    let default_theme = Theme::default();
+                    let _ = fs::write(&path, toml::to_string(&default_theme).expect("Serialization failed"));
+                    default_theme
                 }
+            },
+            _ => {
+                let default_theme = Theme::default();
+                let _ = fs::write(&path, toml::to_string(&default_theme).expect("Serialization failed"));
+                default_theme
             }
-            Err(_) => {
-                let x= Theme::default();
-                fs::write(
-                    &path,
-                    toml::to_string(&x).expect("Failed to serialize theme")
-                )
-                .expect("Failed to write theme file");
-                //fs::write("log.txt", format!("{:?}", x)).unwrap();
-                x
-            }
-        };
-        theme_conf
+        }
+    }
+    pub fn list_themes(&self) -> Result<Vec<PathBuf>, std::io::Error> {
+        let base_dir = config_dir().unwrap_or_else(|| PathBuf::from("."));
+        let themes_dir = base_dir.join("tpad").join("themes");
+        let entries = fs::read_dir(themes_dir)?;
+        entries.map(|entry| entry.map(|e| e.path())).collect()
     }
 }

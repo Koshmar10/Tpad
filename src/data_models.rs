@@ -12,20 +12,19 @@ pub enum CursorDirection {
 }
 
 pub struct App {
-    pub clipboard: ClipboardContext,
     pub theme: Theme,
+    pub selected_theme: usize,
+    
+    pub clipboard: ClipboardContext,
     pub documents: Vec<Document>,
     pub window_height: u16,
+
     pub input_buffer: String,
 
     pub active: usize,
     pub running: bool,
-    pub render_error: bool,
-    pub error_msg: String,
-
-    pub exit_requested: bool,
-    pub show_popup: bool,
-    pub popup_message: String,
+    
+    pub popup: Option<Popup>,
 
     pub focus: Windows,
     pub curs_x: usize,
@@ -43,15 +42,13 @@ pub struct LayoutSnapshot {
 }
 pub struct RenderContext<'a> {
     pub theme: &'a Theme,
+    pub selected_theme: &'a usize,
+
+    pub popup: &'a Option<Popup>,
     pub documents: &'a Vec<Document>,
     pub input_buffer: &'a String,
     pub active: &'a usize,
     pub running: &'a bool,
-    pub render_error: &'a bool,
-    pub error_msg: &'a String,
-    pub exit_requested: &'a bool,
-    pub show_popup: &'a bool,
-    pub popup_message: &'a String,
     pub focus: &'a Windows,
     pub curs_x: &'a usize,
 }
@@ -104,6 +101,19 @@ pub enum EditOp {
         merge_point: usize,
         applied: bool,
     }, // ← Undo of SplitLine
+    DeleteSelection{
+        start: (usize, usize),
+        stop: (usize, usize),
+        selection: String,
+        applied: bool,
+    },
+    InsetSelection{
+        applied: bool,
+        start: (usize, usize),
+        stop: (usize, usize),
+        selection: String,
+    }
+    
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -130,7 +140,12 @@ pub struct SavedSession {
     pub active: usize,
 }
 
-pub enum Popoup {
+pub enum PopupTypes {
     ErrorPopup,
-    InteractivePopup,
+    SaveOnClosePopup,
+    ThemeSelectPopup,
+}
+pub struct Popup {
+    pub kind: PopupTypes,
+    pub msg: String,
 }

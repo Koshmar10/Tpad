@@ -1,8 +1,8 @@
 use crate::data_models::*;
 use crate::theme::hex_to_color;
-use crate::tpad_error::render_error_popup;
+
 use crate::{
-    LayoutSnapshot, tpad_error,
+    LayoutSnapshot,
     ui::{doc_view::render_doc_view, status::render_status_bar, tab::render_tab_bar},
 };
 use crossterm::terminal::WindowSize;

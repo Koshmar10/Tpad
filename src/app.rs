@@ -1,5 +1,6 @@
 use color_eyre::owo_colors::OwoColorize;
 use copypasta::{ClipboardContext, ClipboardProvider};
+use ratatui::layout::Direction;
 use ratatui::symbols::line;
 use ratatui::{DefaultTerminal, Frame};
 use std::error::Error;
@@ -14,7 +15,7 @@ use crate::data_models::*;
 use crate::session;
 
 use crate::theme::Theme;
-use crate::ui::render;
+use crate::ui::{popup, render};
 
 impl App {
     pub fn new(file_args: Vec<String>) -> App {
@@ -72,18 +73,15 @@ impl App {
         }
 
         App {
-            clipboard: ClipboardContext::new().unwrap(),
             theme:Theme::load(),
+            selected_theme : 0,
+            popup: None,
+            clipboard: ClipboardContext::new().unwrap(),
             window_height: 0,
             documents,
             active: 0,
-            render_error,
-            error_msg,
             running: true,
             input_buffer: String::new(),
-            show_popup: false,
-            exit_requested: false,
-            popup_message: String::new(),
             focus: Windows::Editor,
             curs_x: 0,
     
@@ -94,15 +92,12 @@ impl App {
         while self.running {
             let ctx = RenderContext {
                 theme: &self.theme,
+                selected_theme: &self.selected_theme,
                 documents: &self.documents,
                 input_buffer: &self.input_buffer,
-                show_popup: &self.show_popup,
+                popup: &self.popup,
                 active: &self.active,
                 running: &self.running,
-                render_error: &self.render_error,
-                error_msg: &self.error_msg,
-                exit_requested: &self.exit_requested,
-                popup_message: &self.popup_message,
                 focus: &self.focus,
                 curs_x: &self.curs_x,
             };
@@ -116,9 +111,7 @@ impl App {
             for doc in &mut self.documents {
                 doc.state.window_height = self.window_height as usize;
             }
-            if self.exit_requested && !self.show_popup {
-                self.exit().unwrap();
-            }
+
             self.handle_events()?;
         }
         Ok(())
@@ -126,33 +119,19 @@ impl App {
     pub fn handle_events(&mut self) -> io::Result<()> {
         match event::read()? {
             Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
-                self.clear_error();
-                self.handle_key_event(key_event);
+                if self.popup.is_some() {
+                    let popup = self.popup.take().unwrap();
+                    self.popup = self.handle_popup(popup, key_event);
+                } else {
+                    self.handle_key_event(key_event);
+                }
             }
             _ => {}
         }
         Ok(())
     }
     pub fn handle_key_event(&mut self, key_event: KeyEvent) {
-        if self.show_popup {
-            match key_event.code {
-                KeyCode::Char('y') => {
-                    self.documents[self.active]
-                        .save_file()
-                        .unwrap_or_else(|e| self.throw_error(e));
-                    self.show_popup = false;
-                    self.exit_requested = false;
-                    self.exit().unwrap_or_else(|e| self.throw_error(e));
-                }
-                KeyCode::Char('n') => {
-                    self.show_popup = false;
-                    self.exit_requested = false;
-                    self.exit().unwrap_or_else(|e| self.throw_error(e));
-                }
-                _ => return,
-            }
-            return;
-        }
+        
         match (key_event.code, key_event.modifiers) {
             // Handle ':' to switch to Command mode
             (KeyCode::Char(':'), KeyModifiers::NONE) => {
@@ -177,13 +156,14 @@ impl App {
                         let active_doc = &mut self.documents[self.active];
                        
                         let offset = active_doc.state.scroll_offset;
-                        let split_index = active_doc.state.curs_x;
+                        let split_index = active_doc.state.curs_x
+                        ;
                         //if a split is initialized and the cursor is on the last line of the doc
                         //a new line is created so that he split does not create panic
                         if offset + active_doc.state.curs_y >= active_doc.content.len(){
                             active_doc.content.push(String::new());
                         }
-                        if active_doc.state.curs_y == active_doc.state.window_height {
+                        if active_doc.state.curs_y >= active_doc.state.window_height-2 {
                             active_doc.state.scroll_offset+=1;
                         }
                         active_doc.state.undo_stack.push(
@@ -193,6 +173,10 @@ impl App {
                         active_doc.split_lines(
                             offset+active_doc.state.curs_y,
                             split_index);
+                        if active_doc.state.curs_y < active_doc.state.window_height-2{    
+                            move_curs(active_doc, CursorDirection::Down);
+                        }
+                        active_doc.state.curs_x=0;
                         
                     }
                 }
@@ -200,7 +184,14 @@ impl App {
 
             // Handle Ctrl + Q to quit the application
             (KeyCode::Char('q'), KeyModifiers::CONTROL) => {
-                self.try_exit();
+                if self.documents[self.active].state.is_dirty {
+                        self.show_popup(String::from("Save before quitting?"), PopupTypes::SaveOnClosePopup);
+                    }   
+                    else{
+                        self.exit().unwrap_or_else(
+                            |e| self.show_popup(e.to_string(), PopupTypes::ErrorPopup)
+                        );
+                    }
             }
 
             // Handle Alt + Left Arrow to switch tabs left
@@ -304,39 +295,59 @@ impl App {
                         let active_doc = &mut self.documents[self.active];
                         let offset = active_doc.state.scroll_offset;
                         // Check if the cursor is at the beginning of the line.
-                        if active_doc.state.curs_x == 0 {
-                            if active_doc.state.curs_y ==0 && active_doc.state.scroll_offset == 0{
-                                return;
-                            }
-                            if active_doc.state.curs_y == 0 && active_doc.state.scroll_offset > 0{
-                                //its on the first visible line && there are lines above
-                                //scrolling is needed 
-                                active_doc.state.scroll_offset-=1;
-                            }
-                            active_doc.state.undo_stack.push(EditOp::MergeLines { 
-                                merged_line: offset + active_doc.state.curs_y.saturating_sub(1), 
-                                merge_point: active_doc.content[offset + active_doc.state.curs_y.saturating_sub(1)].len(), 
-                                applied: false });
+
+                        match  active_doc.state.selection {
+
+                            Some((start, stop)) => {
+                                //in order for something to be selected it mys texist 
                                
-                            active_doc.merge_lines(
-                                offset + active_doc.state.curs_y .saturating_sub(1), 
-                                offset + active_doc.state.curs_y  );
-                            
-                        } else {
-                            // Delete the character on the left of the cursor.
-                            
-                            
-                           let ch = active_doc.content[offset+active_doc.state.curs_y].chars().nth(active_doc.state.curs_x - 1).unwrap();
-                            active_doc.state.undo_stack.push(EditOp::DeleteChar {
-                                line: offset + active_doc.state.curs_y,
-                                col: active_doc.state.curs_x-1,
-                                ch: ch,
-                                applied: false,
-                            });
-            
-                            active_doc.delete_char(
-                                offset + active_doc.state.curs_y, 
-                                active_doc.state.curs_x);
+                                let deleted = active_doc.delete_selection(start, stop);
+                                active_doc.state.undo_stack.push(
+                                    EditOp::DeleteSelection { start:start, stop:stop, selection: deleted, applied: false }
+                                );
+
+                                active_doc.adjust_cursor(start.min(stop).0, start.min(stop).1, false);
+                                //If all selection is a complete line
+                                
+                            }
+                            None =>{
+                                if active_doc.state.curs_x == 0 {
+                                    if active_doc.state.curs_y ==0 && active_doc.state.scroll_offset == 0{
+                                        return;
+                                    }
+                                    if active_doc.state.curs_y == 0 && active_doc.state.scroll_offset > 0{
+                                        //its on the first visible line && there are lines above
+                                        //scrolling is needed 
+                                        active_doc.state.scroll_offset-=1;
+                                    }
+                                    active_doc.state.undo_stack.push(EditOp::MergeLines { 
+                                        merged_line: (offset + active_doc.state.curs_y).saturating_sub(1), 
+                                        merge_point: active_doc.content[(offset + active_doc.state.curs_y).saturating_sub(1)].len(), 
+                                        applied: false });
+                                       
+                                    active_doc.merge_lines(
+                                        (offset + active_doc.state.curs_y).saturating_sub(1), 
+                                        offset + active_doc.state.curs_y  );
+                                    
+                                } else {
+                                    // Delete the character on the left of the cursor.
+                                    
+                                    
+                                   let ch = active_doc.content[offset+active_doc.state.curs_y].chars().nth(active_doc.state.curs_x - 1).unwrap();
+                                    active_doc.state.undo_stack.push(EditOp::DeleteChar {
+                                        line: offset + active_doc.state.curs_y,
+                                        col: active_doc.state.curs_x-1,
+                                        ch: ch,
+                                        applied: false,
+                                    });
+                    
+                                    active_doc.delete_char(
+                                        offset + active_doc.state.curs_y, 
+                                        active_doc.state.curs_x);
+                                    
+                                }
+        
+                            }
                             
                         }
                     }
@@ -389,27 +400,52 @@ impl App {
                         let insert_line = active_doc.state.curs_y+offset;
                         match active_doc.content.get_mut(insert_line){
                             Some(line) =>{
-                                line.insert_str(active_doc.state.curs_x, &self.clipboard.get_contents().unwrap_or(String::new()));
-                                active_doc.content ={
-                                    let mut updated:Vec<String>= Vec::new();
-                                    for line in &active_doc.content{
-                                        for new_line in  line.split("\n"){
-                                            updated.push(new_line.to_string());
+                                let selection = &self.clipboard.get_contents().unwrap_or(String::new());
+                                let stop_cord: (usize, usize)= {
+                                    let split_content:Vec<String> = 
+                                    {   let mut x = Vec::new();
+                                        for s in selection.split('\n'){
+                                            x.push(s.to_string());
                                         }
-                                    }
-                                    updated
+                                    x};
+                                    let stop_y = split_content.len()-1 + insert_line;
+                                    let stop_x = split_content.last().unwrap().len(); 
+                                    (stop_y, stop_x)
+                                } ;
 
-                                } 
+                                active_doc.insert_selection((insert_line, active_doc.state.curs_x), selection.to_owned());
+                                    
+                                active_doc.state.undo_stack.push(
+                                    EditOp::InsetSelection { applied: false, 
+                                        start: (active_doc.state.curs_y, active_doc.state.curs_x), 
+                                        stop: stop_cord, 
+                                        selection: selection.to_owned() }
+
+                                );
+                                active_doc.adjust_cursor(stop_cord.0, stop_cord.1, false );
+                                
                             },
                             None => return,
                         };
+                        
                     }
                     _=>{}
                 }
             }
-            (KeyCode::Char('s'), KeyModifiers::CONTROL) => self.documents[self.active]
-                .save_file()
-                .unwrap_or_else(|e| self.throw_error(e)),
+            (KeyCode::Char('s'), KeyModifiers::CONTROL) => 
+            {
+                
+                match self.documents[self.active].save_file() {
+                    Ok(_ ) => {
+                        self.theme = Theme::load();
+                    }
+                    Err(e) =>{
+                        self.show_popup(e.to_string(), PopupTypes::ErrorPopup)
+                    }
+                }
+                
+                
+            },
             (KeyCode::Char('z') | KeyCode::Char('y'), KeyModifiers::CONTROL) => {
                 let active_doc = &mut self.documents[self.active];
                 match key_event.code {
@@ -541,6 +577,10 @@ impl App {
         } else if command.trim() == "theme" {
             Ok(Some(Operations::Open(String::from("/home/petru/.config/tpad/theme.toml"))))
         } 
+        else if command.trim() == "set"{
+            self.show_popup(String::new(), PopupTypes::ThemeSelectPopup);
+            Ok(Some(Operations::None))
+        }
         else if command.trim().starts_with('/'){
             Ok(Some(Operations::Find(String::from(command.trim().trim_start_matches("/")))))
         } else if command.trim() == "count" {
@@ -552,16 +592,17 @@ impl App {
             self.documents[self.active].state.undo_stack.cursor = 0;
             Ok(Some(Operations::None))
         } else if command.trim() == "q" {
-            Ok(Some(Operations::Exit))
+            Ok(Some(Operations::Close))
         }else if command.trim() == "wq" {
             self.documents[self.active].save_file()?;
-            Ok(Some(Operations::Exit))
+            Ok(Some(Operations::Close))
         } else if command.trim() == "w" {
             self.documents[self.active].save_file()?;
             Ok(Some(Operations::None))
         } 
         else if command.trim() == "cl" {
-            Ok(Some(Operations::Close))
+            Ok(Some(Operations::Exit))
+           
         } else {
             Err("Invalid command ".into())
         }
@@ -573,7 +614,7 @@ impl App {
                 Some(Operations::Open(file_path)) => {
                     let result = self.open(&file_path);
                     if let Err(e) = result {
-                        self.throw_error(e); // Fixed method name
+                        self.show_popup(e.to_string(), PopupTypes::ErrorPopup); // Fixed method name
                     }
                 }
                 Some(Operations::Find(word)) => {
@@ -587,7 +628,14 @@ impl App {
                     println!("{}", msg[0]);
                 }
                 Some(Operations::Exit) => {
-                    self.try_exit();
+                    if self.documents[self.active].state.is_dirty {
+                        self.show_popup(String::from("Save before quitting?"), PopupTypes::SaveOnClosePopup);
+                    }   
+                    else{
+                        self.exit().unwrap_or_else(
+                            |e| self.show_popup(e.to_string(), PopupTypes::ErrorPopup)
+                        );
+                    }
                 }
                 Some(Operations::List) => {
                     let msg = self.list_docs();
@@ -603,20 +651,11 @@ impl App {
                 None => {},
             },
             Err(e) => {
-                self.throw_error(e); // Fixed method name
+                self.show_popup(e.to_string(), PopupTypes::ErrorPopup); // Fixed method name
             }
         }
     }
-    pub fn try_exit(&mut self) {
-        let doc = &self.documents[self.active];
-        if doc.state.is_dirty {
-            self.show_popup = true;
-            self.exit_requested = true;
-            self.popup_message = String::from("Save befor exiting?(y/n)");
-        } else {
-            self.exit().unwrap();
-        }
-    }
+    
 
     pub fn exit(&mut self) -> Result<(), Box<dyn Error>> {
         session::save_session(self)?;
@@ -626,10 +665,18 @@ impl App {
 }
 pub fn move_curs(active_doc: &mut Document, direction: CursorDirection) {
     // Get the currently active document
+    if active_doc.content.len() == 0 {return;}
         match direction {
             CursorDirection::Left => {
                 if active_doc.state.curs_x > 0 {
                     active_doc.state.curs_x -= 1;
+                }
+                else {
+                    if active_doc.state.curs_y !=0 {
+
+                        active_doc.state.curs_y = (active_doc.state.scroll_offset+ active_doc.state.curs_y).saturating_sub(1);
+                        active_doc.state.curs_x = active_doc.content[active_doc.state.curs_y].len();
+                    }
                 }
             }
             CursorDirection::Right => {

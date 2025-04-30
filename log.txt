@@ -1,2 +1,4 @@
-0,0 0,45 
- salut voi copia acest text in celalatl fisier
+39,0 42,0 
+ pula
+pula
+pula

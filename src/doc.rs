@@ -1,8 +1,9 @@
-use std::{error::Error, fs, os::unix::fs::MetadataExt};
+use std::{error::Error, fs, os::unix::fs::MetadataExt, str::Chars};
 
 use ratatui::symbols::line;
+use serde_json::to_string;
 
-use crate::{app::move_curs, data_models::*};
+use crate::{app::{self, move_curs}, data_models::*};
 
 impl EditorState {
     pub fn new(past_state: Option<EditorState>) -> EditorState {
@@ -72,26 +73,38 @@ impl Document {
     pub fn update_content(&mut self) {
         // Ensure that empty lines are preserved
         self.state.is_dirty = true;
-        let new_content: Vec<String> = self
-            .content
-            .iter()
-            .map(|line| {
-                if line.is_empty() {
-                    String::new() // Preserve empty lines
-                } else {
-                    line.clone()
+        let new_content: Vec<String> = {
+            let mut new = Vec::new();
+            for line in &self.content {
+                if line.is_empty(){
+                    new.push(String::new());
                 }
-            })
-            .collect();
+                else{
+                    if line.contains('\n'){
+                        for spl in line.split('\n'){
+                            new.push(spl.to_string());
+                        }
+                    }
+                    else{
+                        new.push(line.to_owned());
+                    }
+                }
+                
+            }
+            new
+        };
+
         self.content = new_content;
         // Update the file size based on the new content
         self.size = self.content.join("\n").len() as u64;
     }
     pub fn save_file(&mut self) -> Result<(), Box<dyn Error>> {
         if self.state.is_dirty {
+
             let content_sring = self.content.join("\n");
             let to = self.file_path.clone();
             fs::write(to, content_sring)?;
+            
             self.state.is_dirty = false;
         }
 
@@ -150,6 +163,8 @@ impl Document {
             InsertChar { line: usize, col: usize, ch: char },
             MergeLines { first_line: usize, second_line: usize },
             SplitLine { merged_line: usize, merge_point: usize },
+            InsertSelection{start: (usize, usize), stop: (usize,usize), selection: String},
+            DeleteSelection{start: (usize, usize), stop:(usize, usize)}
         }
 
         let action = {
@@ -196,6 +211,32 @@ impl Document {
                     // Undo a merge by splitting the merged line at merge_point.
                     OpAction::SplitLine { merged_line: m_line, merge_point: m_point }
                 }
+                EditOp::DeleteSelection { start, stop, selection, applied } =>{
+                    if *applied {
+                        return Ok(());
+                        
+                    }
+                    *applied = true;
+                    if *start > *stop {
+                        let temp = *start;
+                        *start = *stop;
+                        *stop = temp;
+                    }
+                    OpAction::InsertSelection{start: *start, stop: *stop, selection: selection.to_owned()}
+                }
+                EditOp::InsetSelection { applied, start, stop ,selection} =>{
+                    if *applied {
+                        return Ok(());
+                        
+                    }
+                    *applied = true;
+                    if *start > *stop {
+                        let temp = *start;
+                        *start = *stop;
+                        *stop = temp;
+                    }
+                    OpAction::DeleteSelection { start: *start, stop: *stop }
+                }
             }
         };
 
@@ -216,6 +257,17 @@ impl Document {
                 self.split_lines(merged_line, merge_point);
                 self.adjust_cursor(merged_line, merge_point.saturating_sub(1), false);
             }
+            OpAction::InsertSelection { start, stop, selection } =>{
+                self.insert_selection(start, selection);
+                self.adjust_cursor(stop.0, stop.1, false);
+            }
+            OpAction::DeleteSelection { start, stop } => {
+                self.delete_selection(start, stop);
+                self.adjust_cursor(start.0,start.1, false);
+                if start.0 < self.content.len(){
+                    move_curs(self, CursorDirection::Up);
+                }
+            }
         }
 
         Ok(())
@@ -227,68 +279,102 @@ impl Document {
     
     pub fn redo(&mut self) {
         // First, extract operation details and update the applied flag.
-        let (action, line, col, ch, add_offset) = {
+      
             let op_stack = &mut self.state.undo_stack;
             if op_stack.cursor >= op_stack.stack.len() {
-                return;
+            return;
             }
-            match &mut op_stack.stack[op_stack.cursor] {
-                EditOp::InsertChar { line, col, ch, applied } => {
-                    if *applied {
-                        *applied = false;
-                        ("insert", *line, *col, Some(*ch), true)
-                    } else {
-                        return;
-                    }
-                }
-                EditOp::DeleteChar { line, col, ch: _, applied } => {
-                    if *applied {
-                        *applied = false;
-                        ("delete", *line, *col, None, false)
-                    } else {
-                        return;
-                    }
-                }
-                EditOp::MergeLines { merged_line, merge_point: _, applied } => {
-                    if *applied {
-                        *applied = false;
-                        ("merge", *merged_line, 0, None, false)
-                    } else {
-                        return;
-                    }
-                }
-                EditOp::SplitLine { first_line, second_line: _, split_index, applied } => {
-                    if *applied {
-                        *applied = false;
-                        ("split", *first_line, *split_index, None, false)
-                    } else {
-                        return;
-                    }
+            let op = &mut op_stack.stack[op_stack.cursor];
+            let action : Option<EditOp> = {
+                match op {
+                    EditOp::InsertChar { line, col, ch, applied } => {
+                        if *applied {
+                            *applied = false;
+                            Some(op.clone())
+                //self.insert_char(*line, *col, *ch);
+                } else {
+                    None
                 }
             }
-        };
-
-        // Now perform the redo action outside the mutable borrow of the undo stack.
-        match action {
-            "insert" => {
-                self.insert_char(line, col, ch.unwrap());
-            }
-            "delete" => {
-                self.delete_char(line, col);
-            }
-            "merge" => {
-                // Make sure there is a next line to merge.
-                if line + 1 < self.content.len() {
-                    self.merge_lines(line, line + 1);
+            EditOp::DeleteChar { line, col, applied, .. } => {
+                if *applied {
+                    *applied = false;
+                    ///self.delete_char(*line, *col);
+                    Some(op.clone())
+                } else {
+                    None
                 }
             }
-            "split" => {
-                self.split_lines(line, col);
+            EditOp::MergeLines { merged_line, applied, .. } => {
+                if *applied {
+                *applied = false;
+                Some(op.clone())
+                /*
+                if *merged_line + 1 < self.content.len() {
+                    self.merge_lines(*merged_line, *merged_line + 1);
+                }
+                */
+                } else {
+                    None
+                }
             }
-            _ => {}
+            EditOp::SplitLine { first_line, split_index, applied, .. } => {
+                if *applied {
+                *applied = false;
+                    Some(op.clone())
+                }else {
+                    None
+                }
+            }
+            EditOp::DeleteSelection { start, stop, selection, applied,  } => {
+                if *applied {
+                *applied = false;
+                Some(op.clone())
+                } else {
+                    None
+            }
+            }
+            EditOp::InsetSelection { applied, start, stop ,selection} => {
+                if *applied{
+                    *applied = false;
+                    Some(op.clone())
+                }else {
+                    None
+                }
+            }
+            
         }
-
-        self.adjust_cursor(line, col, add_offset);
+    };
+        match action {
+            Some(op) =>{
+                match op {
+                    EditOp::DeleteChar { line, col, ch, applied } => {
+                        self.delete_char(line, col);
+                        self.adjust_cursor(line, col-1, false);
+                    }
+                    EditOp::DeleteSelection { start, stop, selection, applied } =>{
+                        self.delete_selection(start, stop);
+                    }
+                    EditOp::InsertChar { line, col, ch, applied } =>{
+                        self.insert_char(line, col, ch);
+                        self.adjust_cursor(line, col+1, false);
+                    }
+                    EditOp::MergeLines { merged_line, merge_point, applied } =>{
+                        self.merge_lines(merged_line, merged_line+1);
+                    }
+                    EditOp::SplitLine { first_line, split_index, second_line, applied } =>{
+                        self.split_lines(first_line, split_index);
+                    }
+                    EditOp::InsetSelection { applied, start, stop, selection } =>{
+                        self.insert_selection(start, selection);
+                        self.adjust_cursor(stop.0, stop.1, false);
+                    }
+                    
+                }
+            }
+            None => {}
+        }
+       
         self.state.undo_stack.cursor += 1;
         self.update_content();
     }
@@ -324,7 +410,27 @@ impl Document {
         move_curs(active_doc, CursorDirection::Right);
         active_doc.unhighlight();
     }
+    pub fn insert_selection(&mut self, start: (usize, usize), st:String){
+
+        if start.0 == self.content.len() {
+            self.content.push(String::new());
+        }
+
+        // Determine the insertion index and ensure it's within bounds.
+        if start.1 <= self.content[start.0].len() {
+            self.content[start.0].insert_str(start.1, st.as_str());
+        } else {
+            // If the calculated index is out of bounds, append the string.
+            self.content[start.0].push_str(st.as_str());
+        }
+
+        self.update_content();
+        let active_doc = self;
+        //move_curs(active_doc, CursorDirection::Right);
+        active_doc.unhighlight();
+    }
     pub fn delete_char(&mut self, line: usize, col:usize){
+        
         if let Some(target) = self.content.get_mut(line) {
              
             let delete_index = col;
@@ -334,6 +440,105 @@ impl Document {
                 move_curs(self, CursorDirection::Left);
             }
         }
+    }
+    pub fn delete_selection(&mut self, start: (usize, usize), stop: (usize, usize)) -> String {
+        //order start and stoop
+        let ((start_line, start_col), (stop_line, stop_col)) =
+        if start.0 > stop.0 || (start.0 == stop.0 && start.1 > stop.1) {
+            (stop, start)
+        } else {
+            (start, stop)
+        };
+        
+        if start_line == stop_line {
+            let new_start_col = start_col.min(stop_col);
+            let new_stop_col = stop_col.max(start_col);
+            if new_stop_col - new_start_col == 
+            self.content[start_line].len() 
+            {
+                let mut  deleted: String;
+                deleted = self.content[start_line].clone(); 
+                self.content.remove(start_line);
+                match self.content.get(start_line){
+                    Some(s) => {
+                        self.state.curs_x = s.len();
+                    }
+                    None =>{
+                        self.state.curs_x =0;
+                    }
+                }
+                if start_line == self.content.len(){move_curs(self, CursorDirection::Up)}
+
+                self.update_content();
+                self.state.selection = None;
+                deleted.push('\n');
+                deleted
+            }
+            else{
+                let mut deleted = Vec::new();
+                self.content[start_line]={
+                    self.content[start_line]
+                    .chars().enumerate()
+                    .filter_map(
+                        |(i, c)| {
+                            if !(new_start_col<=i && new_stop_col>i) {
+                                Some(c)
+                            }else{
+                                deleted.push(c);
+                                None
+                            }
+                        }
+                    ).collect()
+                };
+                self.state.selection = None;
+                self.state.curs_x = new_start_col;
+                deleted.iter().collect()
+            }
+        } 
+        else {
+            let mut deleted = Vec::new();
+            let add_final_endl = if stop_col == self.content[stop_line].len() {true} else {false};
+
+            let last_elem = self.content[stop_line][..stop_col].to_owned();
+            self.content[stop_line] = self.content[stop_line][stop_col..].to_string();
+            if self.content[stop_line].len() == 0{
+                self.content.remove(stop_line);
+            }
+            let frist_elem = self.content[start_line][start_col..].to_string();
+            
+            self.content[start_line]=self.content[start_line][..start_col].to_string();
+            deleted.push(frist_elem);
+            self.content = {
+                
+                self.content.iter().enumerate().filter_map(
+                    |(i,line)|
+                    {
+                        if i>start_line && i<stop_line {
+                            deleted.push(line.to_owned());
+                            None
+                        }else {Some(line.to_owned())}
+                    }
+                ).collect()
+            };
+                if start_line+1 < self.content.len(){
+                    self.merge_lines(start_line, start_line+1);
+                }
+                self.state.selection = None;
+                self.state.curs_x = start_col; 
+                self.state.curs_y=start_line;  
+                deleted.push(last_elem);
+                let deleted = deleted.join("\n");
+                if add_final_endl {
+                    deleted +"\n"
+                }
+                else{
+                    deleted
+                }
+                
+                
+                
+            }
+    
     }
     pub fn merge_lines(&mut self, line1:usize, line2:usize){
         //remove highlight styiling
@@ -353,8 +558,6 @@ impl Document {
         self.unhighlight();
         
         let split = &self.content[line1][split_index..].to_owned();
-        
-       
         if split_index == self.content[line1].len(){
             self.content.insert(line1+1, String::new());
             
@@ -367,10 +570,7 @@ impl Document {
             self.content.insert(line1+1, split.to_owned());
         }
         self.update_content();
-        self.state.curs_y+=1;
-        self.state.curs_x=0;
-
-
+        
     }
 
 

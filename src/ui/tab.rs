@@ -104,11 +104,11 @@ pub fn render_tab_bar(f: &mut Frame<'_>, area: Rect, ctx: &data_models::RenderCo
         } else {
             (inactive_bg, inactive_fg)
         };
-        let tab_widget = Paragraph::new(Text::from(name).style(style.0))
+        let tab_widget = Paragraph::new(Text::from(name).style(style.1))
             .block(Block::default().borders(Borders::TOP | Borders::LEFT | Borders::RIGHT))
             .centered()
             .alignment(ratatui::layout::Alignment::Center)
-            .style(Style::default().fg(style.1));
+            .style(Style::default().fg(style.0));
         f.render_widget(tab_widget, chunk);
     }
 }

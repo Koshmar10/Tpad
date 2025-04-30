@@ -1,37 +1,5 @@
-alut voi copia acest text in celalatl fisier
-
-asdadsdasd;wa
-s
-d
-asdad
-salut sunt un decument
-am niste text in mine si sunt
-s 
- ds
-d
-ass
-s
-d
-asdads
-d
-asdads
-d
-asdads
-d
-asdads
-d
-asdads
-d
-asdads
-d
-asdads
-d
-asdadd
-asdaddadsadaasscreat doar pentru exemple 
-s
-d
-asdad
-
-s
-d
-asdad
+linia 1
+linia 2
+linia 3linia 4
+linia 5
+linia 6

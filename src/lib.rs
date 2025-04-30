@@ -2,9 +2,11 @@ pub mod app;
 pub mod data_models;
 pub mod doc;
 pub mod session;
-pub mod tpad_error;
+
 pub mod ui;
 pub mod theme;
+pub mod popup_handler;
+
 pub use data_models::*;
 
 /*
