@@ -396,37 +396,60 @@ impl App {
                     }
                     KeyCode::Char('v') =>{
                         let active_doc = &mut self.documents[self.active];
-                        let offset =  active_doc.state.scroll_offset;
-                        let insert_line = active_doc.state.curs_y+offset;
-                        match active_doc.content.get_mut(insert_line){
-                            Some(line) =>{
-                                let selection = &self.clipboard.get_contents().unwrap_or(String::new());
-                                let stop_cord: (usize, usize)= {
-                                    let split_content:Vec<String> = 
-                                    {   let mut x = Vec::new();
-                                        for s in selection.split('\n'){
-                                            x.push(s.to_string());
-                                        }
-                                    x};
-                                    let stop_y = split_content.len()-1 + insert_line;
-                                    let stop_x = split_content.last().unwrap().len(); 
-                                    (stop_y, stop_x)
-                                } ;
+                        let offset = active_doc.state.scroll_offset;
 
-                                active_doc.insert_selection((insert_line, active_doc.state.curs_x), selection.to_owned());
-                                    
-                                active_doc.state.undo_stack.push(
-                                    EditOp::InsetSelection { applied: false, 
-                                        start: (active_doc.state.curs_y, active_doc.state.curs_x), 
-                                        stop: stop_cord, 
-                                        selection: selection.to_owned() }
-
-                                );
-                                active_doc.adjust_cursor(stop_cord.0, stop_cord.1, false );
-                                
-                            },
-                            None => return,
+                        // If there is a selection, delete it first
+                        let (insert_line, insert_col) = if let Some(sel) = active_doc.state.selection.take() {
+                            // normalize selection bounds
+                            let ((y1, x1), (y2, x2)) = (sel.0, sel.1);
+                            let (start, stop) = if (y1, x1) <= (y2, x2) {
+                                ((y1, x1), (y2, x2))
+                            } else {
+                                ((y2, x2), (y1, x1))
+                            };
+                            // delete the selected range
+                            let deleted = active_doc.delete_selection(start, stop);
+                            active_doc.state.undo_stack.push(
+                                EditOp::DeleteSelection {
+                                    start,
+                                    stop,
+                                    selection: deleted,
+                                    applied: false,
+                                }
+                            );
+                            // move cursor to start of deleted region
+                            active_doc.adjust_cursor(start.0, start.1, false);
+                            // start paste at that position
+                            start
+                        } else {
+                            // no selection: paste at current cursor
+                            (offset + active_doc.state.curs_y, active_doc.state.curs_x)
                         };
+
+                        // Now perform the paste
+                        if let Some(line) = active_doc.content.get_mut(insert_line) {
+                            let clipboard_text = self.clipboard.get_contents().unwrap_or_default();
+                            let lines: Vec<&str> = clipboard_text.split('\n').collect();
+                            // compute stop position
+                            let stop = if lines.len() > 1 {
+                                (insert_line + lines.len() - 1, lines.last().unwrap().len())
+                            } else {
+                                (insert_line, insert_col + lines[0].len())
+                            };
+                            // insert the clipboard text
+                            active_doc.insert_selection((insert_line, insert_col), clipboard_text.clone());
+                            // record for undo
+                            active_doc.state.undo_stack.push(
+                                EditOp::InsetSelection {
+                                    applied: false,
+                                    start: (insert_line, insert_col),
+                                    stop,
+                                    selection: clipboard_text,
+                                }
+                            );
+                            // move cursor to end of inserted text
+                            active_doc.adjust_cursor(stop.0, stop.1, false);
+                        }
                         
                     }
                     _=>{}
@@ -501,9 +524,39 @@ impl App {
                         _ =>{}
                     },
                     Windows::Editor => {
-                        
                         let active_doc = &mut self.documents[self.active];
                         let offset = active_doc.state.scroll_offset;
+                        match active_doc.state.selection{
+
+                            Some(s)=>{
+                                {
+                                    // Normalize selection bounds
+                                    let (y1, x1) = s.0;
+                                    let (y2, x2) = s.1;
+                                    let (start, stop) = if (y1, x1) <= (y2, x2) {
+                                        ((y1, x1), (y2, x2))
+                                    } else {
+                                        ((y2, x2), (y1, x1))
+                                    };
+
+                                    // Delete the selection and record it for undo
+                                    let deleted = active_doc.delete_selection(start, stop);
+                                    active_doc.state.undo_stack.push(EditOp::DeleteSelection {
+                                        start,
+                                        stop,
+                                        selection: deleted,
+                                        applied: false,
+                                    });
+
+                                    // Move cursor to the start of the deleted region and clear selection
+                                    active_doc.adjust_cursor(start.0, start.1, false);
+                                    active_doc.state.selection = None;
+                                }
+                            }
+                            None =>{
+                            
+                            }
+                        }
                         active_doc.state.undo_stack.push(EditOp::InsertChar { 
                             line: offset + active_doc.state.curs_y,
                             col: active_doc.state.curs_x,
@@ -514,7 +567,9 @@ impl App {
                             offset + active_doc.state.curs_y,
                             active_doc.state.curs_x,
                             if key_event.modifiers.contains(KeyModifiers::SHIFT) {c.to_ascii_uppercase()} else {c}
-                        );
+                            );
+
+                        
                         
                         
                         // Ensure the content vector has enough lines

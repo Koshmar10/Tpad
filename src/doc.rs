@@ -1,9 +1,6 @@
-use std::{error::Error, fs, os::unix::fs::MetadataExt, str::Chars};
+use std::{error::Error, fs, os::unix::fs::MetadataExt};
 
-use ratatui::symbols::line;
-use serde_json::to_string;
-
-use crate::{app::{self, move_curs}, data_models::*};
+use crate::{app::move_curs, data_models::*};
 
 impl EditorState {
     pub fn new(past_state: Option<EditorState>) -> EditorState {
@@ -191,7 +188,7 @@ impl Document {
                     // For a deletion, undo by inserting the missing char.
                     OpAction::InsertChar { line: l, col: c, ch }
                 }
-                EditOp::SplitLine { first_line, second_line, split_index, applied } => {
+                EditOp::SplitLine { first_line, second_line, applied, .. } => {
                     if *applied {
                         return Ok(());
                     }
@@ -201,17 +198,17 @@ impl Document {
                     // Undo a split by merging the two split lines.
                     OpAction::MergeLines { first_line: l1, second_line: l2 }
                 }
-                EditOp::MergeLines { merged_line, merge_point, applied } => {
+                EditOp::MergeLines { merged_line, merge_point, applied, .. } => {
                     if *applied {
                         return Ok(());
                     }
-                    let m_line = *merged_line;
-                    let m_point = *merge_point;
+                    let ml = *merged_line;
+                    let mp = *merge_point;
                     *applied = true;
                     // Undo a merge by splitting the merged line at merge_point.
-                    OpAction::SplitLine { merged_line: m_line, merge_point: m_point }
+                    OpAction::SplitLine { merged_line: ml, merge_point: mp }
                 }
-                EditOp::DeleteSelection { start, stop, selection, applied } =>{
+                EditOp::DeleteSelection { start, stop, selection, applied,  } => {
                     if *applied {
                         return Ok(());
                         
@@ -224,18 +221,17 @@ impl Document {
                     }
                     OpAction::InsertSelection{start: *start, stop: *stop, selection: selection.to_owned()}
                 }
-                EditOp::InsetSelection { applied, start, stop ,selection} =>{
+                EditOp::InsetSelection { applied, start, stop, .. } => {
                     if *applied {
                         return Ok(());
-                        
                     }
                     *applied = true;
-                    if *start > *stop {
-                        let temp = *start;
-                        *start = *stop;
-                        *stop = temp;
+                    let mut s = *start;
+                    let mut e = *stop;
+                    if s > e {
+                        std::mem::swap(&mut s, &mut e);
                     }
-                    OpAction::DeleteSelection { start: *start, stop: *stop }
+                    OpAction::DeleteSelection { start: s, stop: e }
                 }
             }
         };
@@ -287,7 +283,7 @@ impl Document {
             let op = &mut op_stack.stack[op_stack.cursor];
             let action : Option<EditOp> = {
                 match op {
-                    EditOp::InsertChar { line, col, ch, applied } => {
+                    EditOp::InsertChar { applied, .. } => {
                         if *applied {
                             *applied = false;
                             Some(op.clone())
@@ -296,16 +292,16 @@ impl Document {
                     None
                 }
             }
-            EditOp::DeleteChar { line, col, applied, .. } => {
+            EditOp::DeleteChar { applied, .. } => {
                 if *applied {
                     *applied = false;
-                    ///self.delete_char(*line, *col);
+                    // self.delete_char(*line, *col);
                     Some(op.clone())
                 } else {
                     None
                 }
             }
-            EditOp::MergeLines { merged_line, applied, .. } => {
+            EditOp::MergeLines { applied, .. } => {
                 if *applied {
                 *applied = false;
                 Some(op.clone())
@@ -318,7 +314,7 @@ impl Document {
                     None
                 }
             }
-            EditOp::SplitLine { first_line, split_index, applied, .. } => {
+            EditOp::SplitLine { applied, .. } => {
                 if *applied {
                 *applied = false;
                     Some(op.clone())
@@ -326,7 +322,7 @@ impl Document {
                     None
                 }
             }
-            EditOp::DeleteSelection { start, stop, selection, applied,  } => {
+            EditOp::DeleteSelection { applied, .. } => {
                 if *applied {
                 *applied = false;
                 Some(op.clone())
@@ -334,8 +330,8 @@ impl Document {
                     None
             }
             }
-            EditOp::InsetSelection { applied, start, stop ,selection} => {
-                if *applied{
+            EditOp::InsetSelection { applied, .. } => {
+                if *applied {
                     *applied = false;
                     Some(op.clone())
                 }else {
@@ -348,24 +344,24 @@ impl Document {
         match action {
             Some(op) =>{
                 match op {
-                    EditOp::DeleteChar { line, col, ch, applied } => {
+                    EditOp::DeleteChar { line, col, .. } => {
                         self.delete_char(line, col);
                         self.adjust_cursor(line, col-1, false);
                     }
-                    EditOp::DeleteSelection { start, stop, selection, applied } =>{
+                    EditOp::DeleteSelection { start, stop, .. } =>{
                         self.delete_selection(start, stop);
                     }
-                    EditOp::InsertChar { line, col, ch, applied } =>{
+                    EditOp::InsertChar { line, col, ch, .. } =>{
                         self.insert_char(line, col, ch);
                         self.adjust_cursor(line, col+1, false);
                     }
-                    EditOp::MergeLines { merged_line, merge_point, applied } =>{
+                    EditOp::MergeLines { merged_line, .. } =>{
                         self.merge_lines(merged_line, merged_line+1);
                     }
-                    EditOp::SplitLine { first_line, split_index, second_line, applied } =>{
+                    EditOp::SplitLine { first_line, split_index, .. } =>{
                         self.split_lines(first_line, split_index);
                     }
-                    EditOp::InsetSelection { applied, start, stop, selection } =>{
+                    EditOp::InsetSelection { start, stop, selection, .. } =>{
                         self.insert_selection(start, selection);
                         self.adjust_cursor(stop.0, stop.1, false);
                     }
@@ -410,24 +406,39 @@ impl Document {
         move_curs(active_doc, CursorDirection::Right);
         active_doc.unhighlight();
     }
-    pub fn insert_selection(&mut self, start: (usize, usize), st:String){
-
-        if start.0 == self.content.len() {
+    pub fn insert_selection(&mut self, start: (usize, usize), st: String) {
+        // Ensure enough lines exist
+        while start.0 >= self.content.len() {
             self.content.push(String::new());
         }
-
-        // Determine the insertion index and ensure it's within bounds.
-        if start.1 <= self.content[start.0].len() {
-            self.content[start.0].insert_str(start.1, st.as_str());
+        let line_idx = start.0;
+        let col_idx = start.1;
+        // Extract the original line to split into prefix and suffix
+        let orig_line = self.content.remove(line_idx);
+        let prefix: String = orig_line.chars().take(col_idx).collect();
+        let suffix: String = orig_line.chars().skip(col_idx).collect();
+        let parts: Vec<&str> = st.split('\n').collect();
+        if parts.len() == 1 {
+            // Single-line insertion
+            self.content.insert(line_idx, format!("{}{}{}", prefix, parts[0], suffix));
         } else {
-            // If the calculated index is out of bounds, append the string.
-            self.content[start.0].push_str(st.as_str());
+            // Multi-line insertion
+            let mut idx = line_idx;
+            for (i, part) in parts.iter().enumerate() {
+                let new_line = if i == 0 {
+                    format!("{}{}", prefix, part)
+                } else if i == parts.len() - 1 {
+                    format!("{}{}", part, suffix)
+                } else {
+                    part.to_string()
+                };
+                self.content.insert(idx, new_line);
+                idx += 1;
+            }
         }
-
         self.update_content();
-        let active_doc = self;
-        //move_curs(active_doc, CursorDirection::Right);
-        active_doc.unhighlight();
+        // Remove any active highlight
+        self.unhighlight();
     }
     pub fn delete_char(&mut self, line: usize, col:usize){
         

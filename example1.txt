@@ -1,10 +1,10 @@
-salut asta e un text de proba
+alut asta e un text de proba
 ca sa pot testa functionalitaiile 
 editorului meu de text, care este 
 un proiect de care sunt foarte mandru
 sex sex sex sex sex sex sex sex sex
-salut asta e un text de proba
-ca sa pot testa functionalitaiile 
+sasalut asta e un text de proba
+
 editorului meu de text, care este 
 unasda
 sdaddda
@@ -17,17 +17,11 @@ unda
 sda
 da
 salut asta e un text de proba
-ca sa pot testa functionalitaiile 
+ sa pot testa functionalitaiile 
 editorului meu de text, care este 
 un
-d
 ad
-salut asta e un text de proba
-
-
-
-
-
+salut asta e un te----------------------------= asdcargo build && kitty ./target/release/tpad "$@"cargo build && kitty ./target/release/tpad "$@" "$@"
 
 
 
