@@ -739,7 +739,11 @@ impl App {
         } else if command.trim().starts_with('/') {
             Ok(Some(Operations::Find(String::from(command.trim().trim_start_matches("/")))))
         } else if command.trim() == "count" {
-            Ok(Some(Operations::WordCount(String::from(args[0]))))
+            if let Some(word) = args.get(0) {
+                Ok(Some(Operations::WordCount((*word).to_string())))
+            } else {
+                Err("No word provided for count command".into())
+            }
         } else if command.trim() == "list" {
             Ok(Some(Operations::List))
         } else if command.trim() == "clundo" {
