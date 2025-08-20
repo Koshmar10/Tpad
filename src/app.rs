@@ -5,6 +5,7 @@ use ratatui::symbols::line;
 use ratatui::{DefaultTerminal, Frame};
 use std::error::Error;
 use std::fs;
+use std::path::{Path, PathBuf};
 
 use color_eyre::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -72,6 +73,15 @@ impl App {
             }
         }
 
+        // Choose a sensible default directory:
+        // $HOME/Documents if available, otherwise current dir
+        let default_dir = std::env::var("HOME")
+            .ok()
+            .map(PathBuf::from)
+            .map(|h| h.join("Documents"))
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_else(|| PathBuf::from("."));
+
         App {
             theme:Theme::load(),
             selected_theme : 0,
@@ -84,7 +94,58 @@ impl App {
             input_buffer: String::new(),
             focus: Windows::Editor,
             curs_x: 0,
-    
+            // NEW: default directory for new files
+            default_dir,
+        }
+    }
+
+    // Resolve a user-supplied path against the default_dir for bare filenames.
+    fn resolve_path(&self, input: &str) -> PathBuf {
+        if input.is_empty() {
+            return self.default_dir.clone();
+        }
+        // Expand ~/...
+        if let Some(stripped) = input.strip_prefix("~/") {
+            if let Ok(home) = std::env::var("HOME") {
+                return PathBuf::from(home).join(stripped);
+            }
+        }
+        let p = PathBuf::from(input);
+        if p.is_absolute() {
+            return p;
+        }
+        // If user provided any separator, treat as relative to CWD as-is
+        if input.contains(std::path::MAIN_SEPARATOR) {
+            return p;
+        }
+        // Bare filename => place it in default_dir
+        self.default_dir.join(p)
+    }
+
+    // Resolve setdir target: absolute -> as-is, "~" or "~/" -> HOME, otherwise HOME/<input>
+    fn resolve_dir_for_setdir(&self, input: &str) -> PathBuf {
+        let p = PathBuf::from(input);
+        if p.is_absolute() {
+            return p;
+        }
+        // Handle "~" and "~/..."
+        if input == "~" || input.starts_with("~/") {
+            let home = std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .unwrap_or_default();
+            let home_pb = PathBuf::from(home);
+            if input == "~" {
+                return home_pb;
+            }
+            let stripped = input.trim_start_matches("~/");
+            return home_pb.join(stripped);
+        }
+        // Otherwise place under HOME
+        if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+            PathBuf::from(home).join(input)
+        } else {
+            // Fallback to current dir if HOME missing
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join(input)
         }
     }
 
@@ -100,6 +161,7 @@ impl App {
                 running: &self.running,
                 focus: &self.focus,
                 curs_x: &self.curs_x,
+                default_dir: &self.default_dir.clone(),
             };
 
             terminal
@@ -131,7 +193,6 @@ impl App {
         Ok(())
     }
     pub fn handle_key_event(&mut self, key_event: KeyEvent) {
-        
         match (key_event.code, key_event.modifiers) {
             // Handle ':' to switch to Command mode
             (KeyCode::Char(':'), KeyModifiers::NONE) => {
@@ -153,6 +214,11 @@ impl App {
                         self.input_buffer.clear();
                     }
                     Windows::Editor => {
+                        if self.documents.is_empty() {
+                            
+                        }else{
+
+                        
                         let active_doc = &mut self.documents[self.active];
                        
                         let offset = active_doc.state.scroll_offset;
@@ -177,30 +243,31 @@ impl App {
                             move_curs(active_doc, CursorDirection::Down);
                         }
                         active_doc.state.curs_x=0;
-                        
+                    }
                     }
                 }
             }
 
             // Handle Ctrl + Q to quit the application
             (KeyCode::Char('q'), KeyModifiers::CONTROL) => {
-                if self.documents[self.active].state.is_dirty {
-                        self.show_popup(String::from("Save before quitting?"), PopupTypes::SaveOnClosePopup);
-                    }   
-                    else{
-                        self.exit().unwrap_or_else(
-                            |e| self.show_popup(e.to_string(), PopupTypes::ErrorPopup)
-                        );
-                    }
+                if self.documents.is_empty() {
+                    // Show help instead of exiting when no docs are open
+                    self.show_empty_state_help();
+                } else if self.documents[self.active].state.is_dirty {
+                    self.show_popup(String::from("Save before quitting?"), PopupTypes::SaveOnClosePopup);
+                } else {
+                    self.exit().unwrap_or_else(|e| self.show_popup(e.to_string(), PopupTypes::ErrorPopup));
+                }
             }
 
             // Handle Alt + Left Arrow to switch tabs left
             (KeyCode::Left, KeyModifiers::ALT) => {
-                if self.active > 0 {
+                if !self.documents.is_empty() && self.active > 0 {
                     self.active -= 1;
                 }
             }
             (KeyCode::Char(c), KeyModifiers::ALT) if c.is_ascii_digit() => {
+                if self.documents.is_empty() { return; }
                 let index = c.to_digit(10).unwrap() as usize;
                 if index > 0 && index <= self.documents.len() {
                     self.change(index - 1);
@@ -209,14 +276,14 @@ impl App {
 
             // Handle Alt + Right Arrow to switch tabs right
             (KeyCode::Right, KeyModifiers::ALT) => {
-                if self.active < self.documents.len() - 1 {
+                if !self.documents.is_empty() && self.active < self.documents.len() - 1 {
                     self.active += 1;
                 }
             }
 
             (KeyCode::Right | KeyCode::Left | KeyCode::Up | KeyCode::Down, KeyModifiers::SHIFT | KeyModifiers::NONE) => {
                 match  self.focus {
-                    Windows::Command =>{
+                    Windows::Command => {
                         match key_event.code {
                             KeyCode::Right => {
                                 if self.curs_x+1 <= self.input_buffer.len() {
@@ -233,7 +300,7 @@ impl App {
                         }
                     }
                     Windows::Editor =>{
-                        
+                        if self.documents.is_empty() { return; }
                         let active_doc = &mut self.documents[self.active];
                         match (key_event.code, key_event.modifiers)  {
                             (KeyCode::Right, KeyModifiers::NONE) => {
@@ -292,6 +359,7 @@ impl App {
                         self.curs_x = self.curs_x.saturating_sub(1);
                     }
                     Windows::Editor => {
+                        if self.documents.is_empty() { return; }
                         let active_doc = &mut self.documents[self.active];
                         let offset = active_doc.state.scroll_offset;
                         // Check if the cursor is at the beginning of the line.
@@ -354,6 +422,7 @@ impl App {
                 }
             }
             (KeyCode::Char('c') | KeyCode::Char('v'), KeyModifiers::CONTROL) =>{
+                if self.documents.is_empty() { return; }
                 let active_doc = &mut self.documents[self.active];
                 match key_event.code {
                     KeyCode::Char('c') =>{
@@ -455,21 +524,24 @@ impl App {
                     _=>{}
                 }
             }
-            (KeyCode::Char('s'), KeyModifiers::CONTROL) => 
-            {
-                
-                match self.documents[self.active].save_file() {
-                    Ok(_ ) => {
-                        self.theme = Theme::load();
-                    }
-                    Err(e) =>{
-                        self.show_popup(e.to_string(), PopupTypes::ErrorPopup)
+
+            (KeyCode::Char('s'), KeyModifiers::CONTROL) => {
+                if self.documents.is_empty() {
+                    self.show_popup("No file to save. Use ': o <file>' to open one.".to_string(), PopupTypes::InfoPopup);
+                } else {
+                    match self.documents[self.active].save_file() {
+                        Ok(_ ) => {
+                            self.theme = Theme::load();
+                        }
+                        Err(e) =>{
+                            self.show_popup(e.to_string(), PopupTypes::ErrorPopup)
+                        }
                     }
                 }
-                
-                
             },
+
             (KeyCode::Char('z') | KeyCode::Char('y'), KeyModifiers::CONTROL) => {
+                if self.documents.is_empty() { return; }
                 let active_doc = &mut self.documents[self.active];
                 match key_event.code {
                     KeyCode::Char('z') => {
@@ -481,7 +553,9 @@ impl App {
                     _ =>{}
                 }
             }
+
             (KeyCode::Char('n') | KeyCode::Char('m'), KeyModifiers::ALT) => {
+                if self.documents.is_empty() { return; }
                 let active_doc = &mut self.documents[self.active];
                 if active_doc.state.find_active {
                     match key_event.code {
@@ -512,18 +586,21 @@ impl App {
             // Handle regular character input
             (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
                 match self.focus {
-                    Windows::Command => match key_event.modifiers {
-                        KeyModifiers::SHIFT => {
-                            self.input_buffer.insert(self.curs_x, c.to_ascii_uppercase());
-                            self.curs_x+=1;
-                        },
-                        KeyModifiers::NONE => {
-                            self.input_buffer.insert(self.curs_x, c);
-                            self.curs_x+=1;
+                    Windows::Command => {
+                        match key_event.modifiers {
+                            KeyModifiers::SHIFT => {
+                                self.input_buffer.insert(self.curs_x, c.to_ascii_uppercase());
+                                self.curs_x+=1;
+                            },
+                            KeyModifiers::NONE => {
+                                self.input_buffer.insert(self.curs_x, c);
+                                self.curs_x+=1;
+                            }
+                            _ =>{}
                         }
-                        _ =>{}
                     },
                     Windows::Editor => {
+                        if self.documents.is_empty() { return; }
                         let active_doc = &mut self.documents[self.active];
                         let offset = active_doc.state.scroll_offset;
                         match active_doc.state.selection{
@@ -584,11 +661,16 @@ impl App {
     
     pub fn open(&mut self, file_path: &str) -> Result<(), Box<dyn Error>> {
         let file_paths : Vec<&str>= file_path.split(" ").collect();
-        for file in file_paths{
-            let doc = Document::new(&String::from(file))?;
+        for file in file_paths {
+            if file.is_empty() { continue; }
+            let final_path = self.resolve_path(file);
+            let final_path_str = final_path.to_string_lossy().to_string();
+            let doc = Document::new(&final_path_str)?;
             self.documents.push(doc);
         }
-        self.active = self.documents.len() - 1;
+        if !self.documents.is_empty() {
+            self.active = self.documents.len() - 1;
+        }
         Ok(())
     }
     pub fn list_docs(&mut self) -> Vec<String> {
@@ -599,12 +681,21 @@ impl App {
     }
 
     pub fn close(&mut self) {
-        if self.documents.len() == 0 {
+        if self.documents.is_empty() {
+            self.show_empty_state_help();
+            return;
+        }else {
+
+            self.documents.remove(self.active);
+            if self.documents.is_empty() {
+                // After closing last doc, show commands/help
+                // Keep active at 0 (no docs)
+                self.active = 0;
+            } else {
+                self.active = self.active.saturating_sub(1);
+            }
             return;
         }
-        self.documents.remove(self.active);
-        self.active = self.active.saturating_sub(1);
-        return;
     }
 
     pub fn view(&self) -> Vec<String> {
@@ -622,6 +713,11 @@ impl App {
     pub fn change(&mut self, index: usize) {
         self.active = index;
     }
+    pub fn rename(&mut self, new_name: &str){
+        let active_doc = &self.documents[self.active];
+        let active_path = &active_doc.file_path;
+
+    }
     pub fn command_parse(&mut self, cmd: &str) -> Result<Option<Operations>, Box<dyn Error>> {
         let mut parts = cmd.trim().split_whitespace();
         let command = parts.next().unwrap_or("");
@@ -631,33 +727,35 @@ impl App {
             Ok(Some(Operations::Open(String::from(args.join(" ")))))
         } else if command.trim() == "theme" {
             Ok(Some(Operations::Open(String::from("/home/petru/.config/tpad/theme.toml"))))
-        } 
-        else if command.trim() == "set"{
+        } else if command.trim() == "set" {
             self.show_popup(String::new(), PopupTypes::ThemeSelectPopup);
             Ok(Some(Operations::None))
-        }
-        else if command.trim().starts_with('/'){
+        } else if command.trim() == "setdir" {
+            if args.is_empty() {
+                Err("setdir requires a path argument".into())
+            } else {
+                Ok(Some(Operations::SetDefaultDir(args.join(" "))))
+            }
+        } else if command.trim().starts_with('/') {
             Ok(Some(Operations::Find(String::from(command.trim().trim_start_matches("/")))))
         } else if command.trim() == "count" {
             Ok(Some(Operations::WordCount(String::from(args[0]))))
         } else if command.trim() == "list" {
             Ok(Some(Operations::List))
-        }else if command.trim() == "clundo" {
+        } else if command.trim() == "clundo" {
             self.documents[self.active].state.undo_stack.stack.clear();
             self.documents[self.active].state.undo_stack.cursor = 0;
             Ok(Some(Operations::None))
         } else if command.trim() == "q" {
             Ok(Some(Operations::Close))
-        }else if command.trim() == "wq" {
+        } else if command.trim() == "wq" {
             self.documents[self.active].save_file()?;
             Ok(Some(Operations::Close))
         } else if command.trim() == "w" {
             self.documents[self.active].save_file()?;
             Ok(Some(Operations::None))
-        } 
-        else if command.trim() == "cl" {
+        } else if command.trim() == "cl" {
             Ok(Some(Operations::Exit))
-           
         } else {
             Err("Invalid command ".into())
         }
@@ -669,44 +767,101 @@ impl App {
                 Some(Operations::Open(file_path)) => {
                     let result = self.open(&file_path);
                     if let Err(e) = result {
-                        self.show_popup(e.to_string(), PopupTypes::ErrorPopup); // Fixed method name
+                        self.show_popup(e.to_string(), PopupTypes::ErrorPopup);
                     }
                 }
                 Some(Operations::Find(word)) => {
-                    let doc = &mut self.documents[self.active];
-                    let matches = doc.find(&word);
-                    doc.highlight(matches);
-                    self.focus = Windows::Editor;
+                    if self.documents.is_empty() {
+                        self.show_popup("No file open. Use ': o <file>' first.".to_string(), PopupTypes::InfoPopup);
+                    } else {
+                        let doc = &mut self.documents[self.active];
+                        let matches = doc.find(&word);
+                        doc.highlight(matches);
+                        self.focus = Windows::Editor;
+                    }
                 }
                 Some(Operations::WordCount(word)) => {
-                    let msg = self.documents[self.active].word_count(&word);
-                    println!("{}", msg[0]);
+                    if self.documents.is_empty() {
+                        self.show_popup("No file open. Use ': o <file>' first.".to_string(), PopupTypes::InfoPopup);
+                    } else {
+                        let msg = self.documents[self.active].word_count(&word);
+                        self.show_popup(format!("Word count is: {}", msg.to_string()), PopupTypes::InfoPopup);
+                    }
                 }
                 Some(Operations::Exit) => {
-                    if self.documents[self.active].state.is_dirty {
+                    if self.documents.is_empty() {
+                        self.exit().unwrap_or_else(|e| self.show_popup(e.to_string(), PopupTypes::ErrorPopup));
+                    } else if self.documents[self.active].state.is_dirty {
                         self.show_popup(String::from("Save before quitting?"), PopupTypes::SaveOnClosePopup);
-                    }   
-                    else{
-                        self.exit().unwrap_or_else(
-                            |e| self.show_popup(e.to_string(), PopupTypes::ErrorPopup)
+                    } else {
+                        self.exit().unwrap_or_else(|e| self.show_popup(e.to_string(), PopupTypes::ErrorPopup));
+                    }
+                }
+                Some(Operations::SetDefaultDir(dir)) => {
+                    // Use HOME-based resolution, not default_dir
+                    let path = self.resolve_dir_for_setdir(&dir);
+                    if let Err(e) = fs::create_dir_all(&path) {
+                        self.show_popup(format!("Failed to set dir: {}", e), PopupTypes::ErrorPopup);
+                    } else if !path.is_dir() {
+                        self.show_popup("Path is not a directory".to_string(), PopupTypes::ErrorPopup);
+                    } else {
+                        self.default_dir = path.clone();
+                        self.show_popup(
+                            format!("Default directory set to:\n{}", path.to_string_lossy()),
+                            PopupTypes::InfoPopup
                         );
                     }
                 }
                 Some(Operations::List) => {
-                    let msg = self.list_docs();
-                    println!("{}", msg.join(" "));
+                    // Pretty-print default dir with ~
+                    let dir_display = {
+                        use std::path::PathBuf;
+                        let p: PathBuf = self.default_dir.clone();
+                        let home_dir = std::env::var_os("HOME")
+                            .or_else(|| std::env::var_os("USERPROFILE"))
+                            .map(PathBuf::from);
+                        if let Some(home) = home_dir {
+                            if let Ok(stripped) = p.strip_prefix(&home) {
+                                format!("~/{}", stripped.to_string_lossy())
+                            } else {
+                                p.to_string_lossy().to_string()
+                            }
+                        } else {
+                            p.to_string_lossy().to_string()
+                        }
+                    };
+                    let commands = [
+                        format!("Default directory: {}", dir_display),
+                        "Change it: setdir <path>".to_string(),
+                        "".to_string(),
+                        "o <file>      - open file (bare name saved under default dir)".to_string(),
+                        "setdir <path> - set default directory for new files".to_string(),
+                        "theme         - open theme file".to_string(),
+                        "set           - choose a theme".to_string(),
+                        "/<pattern>    - search for a pattern".to_string(),
+                        "count <word>  - word count".to_string(),
+                        "list          - list commands".to_string(),
+                        "clundo        - clear undo history".to_string(),
+                        "q             - close buffer".to_string(),
+                        "wq            - save & close buffer".to_string(),
+                        "w             - save buffer".to_string(),
+                        "cl            - exit editor".to_string(),
+                    ];
+                    self.show_popup(commands.join("\n"), PopupTypes::InfoPopup);
                 }
                 Some(Operations::Close) => {
                     self.close();
                 }
                 Some(Operations::Change(index)) => {
-                    self.change(index);
+                    if !self.documents.is_empty() {
+                        self.change(index);
+                    }
                 }
                 Some(Operations::None) => {},
                 None => {},
             },
             Err(e) => {
-                self.show_popup(e.to_string(), PopupTypes::ErrorPopup); // Fixed method name
+                self.show_popup(e.to_string(), PopupTypes::ErrorPopup);
             }
         }
     }
@@ -716,6 +871,19 @@ impl App {
         session::save_session(self)?;
         self.running = false;
         Ok(())
+    }
+
+    pub fn show_empty_state_help(&mut self) {
+        let dir = self.default_dir.to_string_lossy();
+        let help_message = format!(
+            "No documents open. Available commands:\n\n\
+             :o <file>     - open a file (saved under default dir if bare name)\n\
+             :setdir <p>   - set default directory (current: {})\n\
+             :list         - show all commands\n\
+             Ctrl+Q        - quit",
+            dir
+        );
+        self.show_popup(help_message, PopupTypes::InfoPopup);
     }
 }
 pub fn move_curs(active_doc: &mut Document, direction: CursorDirection) {

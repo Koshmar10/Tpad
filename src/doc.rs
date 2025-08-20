@@ -54,10 +54,20 @@ impl UndoStack {
 
 impl Document {
     pub fn new(file_path: &String) -> Result<Document, Box<dyn Error>> {
-        let contents = fs::read_to_string(file_path)?;
+        use std::io::ErrorKind;
+        let contents = match fs::read_to_string(file_path) {
+            Ok(s) => s,
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                fs::File::create(file_path)?;
+                
+                String::new()
+            }
+            Err(e) => return Err(Box::new(e)),
+        };
         let metadata = fs::metadata(file_path)?;
+        
         let size = metadata.size();
-        let lines = contents.lines().map(|line| line.to_string()).collect();
+        let lines = contents.lines().map(|line| line.to_string()).collect::<Vec<_>>();
         let permissions = permission_string(metadata.mode(), metadata.is_dir());
         Ok(Document {
             file_path: file_path.clone(),
@@ -107,8 +117,7 @@ impl Document {
 
         Ok(())
     }
-    pub fn word_count(&self, word: &str) -> Vec<String> {
-        println!("\ncount word: {word}");
+    pub fn word_count(&self, word: &str) -> u32 {
         let mut findings: u32 = 0;
         for line in &self.content {
             for item in line.split_whitespace() {
@@ -117,12 +126,7 @@ impl Document {
                 }
             }
         }
-        let msg: String = if findings != 0 {
-            format!("Found {} matches", findings)
-        } else {
-            "Didn't find any matches".to_string()
-        };
-        vec![msg]
+        return findings
     }
 
     pub fn find(&self, word: &str) -> Vec<(usize, usize, usize)> {

@@ -119,6 +119,10 @@ impl App {
                     }
                     _ => Some(popup),
                 }
+
+            }
+            PopupTypes::InfoPopup => {
+                None  
             }
         }
     }

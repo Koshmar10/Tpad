@@ -1,13 +1,4 @@
-12,0 24,0 
- salut asta e un text de proba
-ca sa pot testa functionalitaiile 
+89,0 92,0 
+ a pot testa functionalitaiile 
 editorului meu de text, care este 
-unda
-sda
-da
-salut asta e un text de proba
-ca sa pot testa functionalitaiile 
-editorului meu de text, care este 
-un
-ad
-salut asta e un text de proba
+uns proiect de care sunt foarte mandru

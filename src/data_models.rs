@@ -1,4 +1,4 @@
-use std::usize;
+use std::{path::PathBuf, usize};
 
 use copypasta::{ClipboardContext, ClipboardProvider};
 use ratatui::layout::Rect;
@@ -28,6 +28,7 @@ pub struct App {
 
     pub focus: Windows,
     pub curs_x: usize,
+    pub default_dir: PathBuf,
 
 }
 pub enum Windows {
@@ -51,6 +52,7 @@ pub struct RenderContext<'a> {
     pub running: &'a bool,
     pub focus: &'a Windows,
     pub curs_x: &'a usize,
+    pub default_dir: &'a PathBuf,
 }
 
 pub struct Document {
@@ -131,6 +133,7 @@ pub enum Operations {
     Close,
     Exit,
     None,
+    SetDefaultDir(String),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -144,6 +147,7 @@ pub enum PopupTypes {
     ErrorPopup,
     SaveOnClosePopup,
     ThemeSelectPopup,
+    InfoPopup,
 }
 pub struct Popup {
     pub kind: PopupTypes,
